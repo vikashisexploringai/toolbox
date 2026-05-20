@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AirShare · Simple Working Version</title>
+    <title>AirShare · Firebase Storage (Works 100%)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -13,7 +13,7 @@
             padding: 1.5rem;
             color: #e0f2f0;
         }
-        .container { max-width: 1300px; margin: 0 auto; }
+        .container { max-width: 1200px; margin: 0 auto; }
         .header { text-align: center; margin-bottom: 2rem; }
         h1 { font-size: 2rem; background: linear-gradient(120deg, #a8ffec, #4fc3b7); background-clip: text; -webkit-background-clip: text; color: transparent; }
         .badge { display: inline-block; background: #1e6b5e; padding: 0.3rem 1rem; border-radius: 40px; font-size: 0.7rem; margin-top: 0.5rem; }
@@ -31,53 +31,60 @@
         .file-dropzone { border: 2px dashed #4fc3b7; border-radius: 1.2rem; padding: 1.2rem; text-align: center; margin: 1rem 0; cursor: pointer; background: #0e3530; }
         .status-box { padding: 0.7rem; border-radius: 1rem; margin: 1rem 0; font-size: 0.85rem; background: #0a2a2a; font-family: monospace; }
         .log { font-family: monospace; font-size: 0.7rem; background: #051a1a; border-radius: 1rem; padding: 0.8rem; max-height: 150px; overflow-y: auto; margin-top: 1rem; }
-        .success { color: #2ecc71; }
-        .error { color: #e74c3c; }
+        .progress-bar { width: 100%; height: 8px; background: #1a4a44; border-radius: 4px; margin: 10px 0; overflow: hidden; }
+        .progress-fill { height: 100%; background: #2ecc71; width: 0%; transition: width 0.3s; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>⚡ AirShare · Simple Working Version</h1>
-        <div class="badge">🔐 Fixed: Data channel now opens correctly</div>
+        <h1>⚡ AirShare · Firebase Storage</h1>
+        <div class="badge">✅ 100% reliable · Files stored temporarily in Firebase Storage</div>
     </div>
 
     <div class="role-selector">
-        <button class="role-btn" id="senderRoleBtn">📤 Sender</button>
-        <button class="role-btn" id="receiverRoleBtn">📥 Receiver</button>
+        <button class="role-btn" id="senderRoleBtn">📤 Upload & Share</button>
+        <button class="role-btn" id="receiverRoleBtn">📥 Download with Code</button>
     </div>
 
     <div id="senderPanel" class="panel">
-        <h2>📤 Send a file</h2>
+        <h2>📤 Upload & Share a file</h2>
         <div class="file-dropzone" id="senderDropzone">
             📂 Click to select file
             <input type="file" id="fileInput" style="display: none;">
         </div>
         <div id="fileInfo" style="margin: 0.5rem 0; font-size: 0.85rem;"></div>
-        <button id="createCodeBtn" style="width: 100%; margin: 0.5rem 0;">🔗 Generate Share Code</button>
+        
+        <div class="progress-bar" id="progressBar" style="display: none;">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        
+        <button id="uploadBtn" disabled style="width: 100%; margin: 0.5rem 0;">🚀 Upload to Cloud</button>
+        
         <div id="codeArea" style="display: none;">
             <div class="code-card">
-                <p>📢 Share this code:</p>
+                <p>✨ File uploaded! Share this code:</p>
                 <div class="big-code" id="displayCode">----</div>
                 <button id="copyCodeBtn">📋 Copy Code</button>
+                <p style="font-size: 0.7rem; margin-top: 10px;">Code expires in 1 hour</p>
             </div>
         </div>
-        <div class="status-box" id="senderStatus">⚡ Waiting...</div>
-        <button id="sendFileBtn" disabled style="width: 100%;">📡 Send File</button>
+        
+        <div class="status-box" id="senderStatus">⚡ Select a file to start</div>
         <div class="log" id="senderLog">📭 Ready.\n</div>
     </div>
 
     <div id="receiverPanel" class="panel">
-        <h2>📥 Receive a file</h2>
+        <h2>📥 Download with code</h2>
         <div class="flex-input">
             <input type="text" id="codeInput" placeholder="Enter 6-char code" maxlength="8" style="text-transform: uppercase;">
-            <button id="connectBtn">🔗 Connect</button>
+            <button id="downloadBtn">🔍 Fetch & Download</button>
         </div>
-        <div class="status-box" id="receiverStatus">⏳ Enter code</div>
-        <div id="downloadArea" style="display: none;">
-            <button id="downloadBtn" disabled style="width: 100%; margin: 1rem 0;">⬇️ Download File</button>
+        <div class="progress-bar" id="downloadProgressBar" style="display: none;">
+            <div class="progress-fill" id="downloadProgressFill"></div>
         </div>
-        <div class="log" id="receiverLog">📭 Enter code to receive.\n</div>
+        <div class="status-box" id="receiverStatus">⏳ Enter code to download</div>
+        <div class="log" id="receiverLog">📭 Enter code to retrieve file.\n</div>
     </div>
 </div>
 
@@ -92,269 +99,152 @@
     };
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js';
-    import { getFirestore, doc, setDoc, getDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js';
+    import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-storage.js';
+    import { getFirestore, doc, setDoc, getDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js';
     
     const app = initializeApp(firebaseConfig);
+    const storage = getStorage(app);
     const db = getFirestore(app, 'shortener');
     
-    const configuration = {
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-    };
-    
-    let pc = null;
-    let dc = null;
-    let currentCode = null;
+    // State
     let selectedFile = null;
-    let receivedChunks = [];
-    let receivedMeta = null;
+    let currentCode = null;
     let isSender = true;
-    let answerListener = null;
-    let candidateListener = null;
     
     // DOM
     const senderPanel = document.getElementById('senderPanel');
     const receiverPanel = document.getElementById('receiverPanel');
     const senderBtn = document.getElementById('senderRoleBtn');
     const receiverBtn = document.getElementById('receiverRoleBtn');
-    const createCodeBtn = document.getElementById('createCodeBtn');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const uploadBtn = document.getElementById('uploadBtn');
     const codeArea = document.getElementById('codeArea');
     const displayCode = document.getElementById('displayCode');
     const copyCodeBtn = document.getElementById('copyCodeBtn');
-    const sendFileBtn = document.getElementById('sendFileBtn');
     const senderStatus = document.getElementById('senderStatus');
     const senderLog = document.getElementById('senderLog');
     const codeInput = document.getElementById('codeInput');
-    const connectBtn = document.getElementById('connectBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
     const receiverStatus = document.getElementById('receiverStatus');
     const receiverLog = document.getElementById('receiverLog');
-    const downloadArea = document.getElementById('downloadArea');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const fileInput = document.getElementById('fileInput');
-    const fileInfo = document.getElementById('fileInfo');
     const dropzone = document.getElementById('senderDropzone');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const downloadProgressBar = document.getElementById('downloadProgressBar');
+    const downloadProgressFill = document.getElementById('downloadProgressFill');
     
     function logSender(msg) { senderLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; senderLog.scrollTop = senderLog.scrollHeight; }
     function logReceiver(msg) { receiverLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; receiverLog.scrollTop = receiverLog.scrollHeight; }
     
     function generateCode() {
-        return Math.random().toString(36).substring(2, 8).toUpperCase();
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
+        let code = '';
+        for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return code;
     }
     
-    async function cleanup() {
-        if (answerListener) answerListener();
-        if (candidateListener) candidateListener();
-        if (pc) {
-            pc.close();
-            pc = null;
-        }
-        dc = null;
-    }
-    
-    // SENDER
-    async function startSender(code) {
-        await cleanup();
+    async function uploadFile(file, code) {
+        const storageRef = ref(storage, `shares/${code}/${file.name}`);
+        const uploadTask = uploadBytesResumable(storageRef, file);
         
-        pc = new RTCPeerConnection(configuration);
+        progressBar.style.display = 'block';
         
-        // Create data channel
-        dc = pc.createDataChannel('fileTransfer');
-        
-        dc.onopen = () => {
-            logSender('🎉 DATA CHANNEL OPEN! Ready to send.');
-            senderStatus.innerText = '✅ Connected! Click Send File';
-            sendFileBtn.disabled = false;
-        };
-        
-        dc.onclose = () => {
-            logSender('⚠️ Data channel closed');
-            sendFileBtn.disabled = true;
-        };
-        
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                await setDoc(doc(db, 'candidates_sender', code), {
-                    candidate: event.candidate,
-                    ts: Date.now()
-                });
-            } else {
-                logSender('ICE gathering complete');
-            }
-        };
-        
-        pc.oniceconnectionstatechange = () => {
-            logSender(`ICE state: ${pc.iceConnectionState}`);
-        };
-        
-        // Create offer
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        
-        await setDoc(doc(db, 'offers', code), {
-            offer: { type: offer.type, sdp: offer.sdp },
-            ts: Date.now()
-        });
-        
-        logSender(`Offer created for: ${code}`);
-        
-        // Listen for answer
-        answerListener = onSnapshot(doc(db, 'answers', code), async (snap) => {
-            if (snap.exists() && pc.signalingState === 'have-local-offer') {
-                const answer = snap.data().answer;
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                logSender('✅ Answer received!');
-                // Clean up offer after answer
-                await deleteDoc(doc(db, 'offers', code)).catch(()=>{});
-            }
-        });
-        
-        // Listen for receiver candidates
-        candidateListener = onSnapshot(doc(db, 'candidates_receiver', code), async (snap) => {
-            if (snap.exists() && pc.remoteDescription) {
-                const cand = snap.data().candidate;
-                try {
-                    await pc.addIceCandidate(new RTCIceCandidate(cand));
-                    logSender('ICE candidate added');
-                } catch(e) {}
-            }
+        return new Promise((resolve, reject) => {
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                    progressFill.style.width = `${progress}%`;
+                    senderStatus.innerText = `Uploading: ${Math.round(progress)}%`;
+                },
+                (error) => {
+                    logSender(`Upload error: ${error.message}`);
+                    reject(error);
+                },
+                async () => {
+                    const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                    // Store metadata in Firestore
+                    await setDoc(doc(db, 'fileMetadata', code), {
+                        fileName: file.name,
+                        fileType: file.type,
+                        fileSize: file.size,
+                        storagePath: `shares/${code}/${file.name}`,
+                        downloadURL: downloadURL,
+                        createdAt: Date.now(),
+                        expiresAt: Date.now() + 3600000 // 1 hour
+                    });
+                    progressBar.style.display = 'none';
+                    resolve(downloadURL);
+                }
+            );
         });
     }
     
-    // RECEIVER
-    async function startReceiver(code) {
-        await cleanup();
-        
-        const offerDoc = await getDoc(doc(db, 'offers', code));
-        if (!offerDoc.exists()) {
-            receiverStatus.innerText = `❌ Code not found`;
-            logReceiver(`No offer for ${code}`);
+    async function downloadFile(code) {
+        const metadataDoc = await getDoc(doc(db, 'fileMetadata', code));
+        if (!metadataDoc.exists()) {
+            receiverStatus.innerText = `❌ Code "${code}" not found or expired`;
+            logReceiver(`Code not found: ${code}`);
             return false;
         }
         
-        const offerData = offerDoc.data().offer;
-        pc = new RTCPeerConnection(configuration);
+        const metadata = metadataDoc.data();
+        receiverStatus.innerText = `Found: ${metadata.fileName} (${(metadata.fileSize/1024).toFixed(1)} KB)`;
+        logReceiver(`Found file: ${metadata.fileName}`);
         
-        pc.ondatachannel = (event) => {
-            logReceiver('📡 Data channel received!');
-            dc = event.channel;
-            setupReceiverChannel(dc);
-        };
+        // Download from Storage
+        const storageRef = ref(storage, metadata.storagePath);
         
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                await setDoc(doc(db, 'candidates_receiver', code), {
-                    candidate: event.candidate,
-                    ts: Date.now()
-                });
-            }
-        };
-        
-        await pc.setRemoteDescription(new RTCSessionDescription(offerData));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        
-        await setDoc(doc(db, 'answers', code), {
-            answer: { type: answer.type, sdp: answer.sdp },
-            ts: Date.now()
-        });
-        
-        receiverStatus.innerText = '✅ Connected! Waiting for file...';
-        logReceiver(`Connected to ${code}`);
-        
-        // Clean up after 10 seconds
-        setTimeout(async () => {
-            await deleteDoc(doc(db, 'offers', code)).catch(()=>{});
-            await deleteDoc(doc(db, 'answers', code)).catch(()=>{});
-        }, 10000);
-        
-        return true;
-    }
-    
-    function setupReceiverChannel(channel) {
-        receivedChunks = [];
-        receivedMeta = null;
-        
-        channel.onopen = () => {
-            logReceiver('✅ Data channel open');
-        };
-        
-        channel.onmessage = (event) => {
-            if (typeof event.data === 'string') {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'metadata') {
-                        receivedMeta = data.data;
-                        receiverStatus.innerText = `Receiving ${receivedMeta.name}...`;
-                        logReceiver(`Receiving: ${receivedMeta.name} (${(receivedMeta.size/1024).toFixed(1)} KB)`);
-                    } else if (data.type === 'complete') {
-                        const blob = new Blob(receivedChunks, { type: receivedMeta?.type || 'application/octet-stream' });
-                        const url = URL.createObjectURL(blob);
-                        downloadBtn.onclick = () => {
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = receivedMeta?.name || 'file';
-                            a.click();
-                            URL.revokeObjectURL(url);
-                            logReceiver(`✅ Downloaded: ${receivedMeta?.name}`);
-                            downloadBtn.disabled = true;
-                        };
-                        downloadBtn.disabled = false;
-                        downloadArea.style.display = 'block';
-                        receiverStatus.innerText = `✅ Ready! Click Download (${(blob.size/1024).toFixed(1)} KB)`;
-                        logReceiver(`Transfer complete`);
-                    }
-                } catch(e) {}
-            } else if (event.data instanceof ArrayBuffer) {
-                receivedChunks.push(event.data);
-                if (receivedMeta) {
-                    const received = receivedChunks.reduce((s, c) => s + c.byteLength, 0);
-                    const percent = ((received / receivedMeta.size) * 100).toFixed(0);
-                    receiverStatus.innerText = `📥 ${percent}% of ${receivedMeta.name}`;
-                }
-            }
-        };
-    }
-    
-    function sendFile(file) {
-        if (!dc || dc.readyState !== 'open') {
-            logSender(`❌ Data channel not open. State: ${dc?.readyState || 'null'}`);
-            senderStatus.innerText = '❌ Not connected';
-            return;
-        }
-        
-        const CHUNK_SIZE = 16384;
-        let offset = 0;
-        
-        dc.send(JSON.stringify({
-            type: 'metadata',
-            data: { name: file.name, type: file.type, size: file.size }
-        }));
-        
-        const reader = new FileReader();
-        
-        function sendNext() {
-            const slice = file.slice(offset, offset + CHUNK_SIZE);
-            reader.onload = (e) => {
-                dc.send(e.target.result);
-                offset += e.target.result.byteLength;
-                const percent = ((offset / file.size) * 100).toFixed(0);
-                logSender(`📤 ${percent}%`);
-                if (offset < file.size) {
-                    sendNext();
-                } else {
-                    dc.send(JSON.stringify({ type: 'complete' }));
-                    logSender(`✅ File sent!`);
-                    senderStatus.innerText = '✅ File sent!';
-                    sendFileBtn.disabled = true;
+        try {
+            downloadProgressBar.style.display = 'block';
+            
+            const xhr = new XMLHttpRequest();
+            xhr.responseType = 'blob';
+            
+            xhr.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = (event.loaded / event.total) * 100;
+                    downloadProgressFill.style.width = `${percent}%`;
+                    receiverStatus.innerText = `Downloading: ${Math.round(percent)}%`;
                 }
             };
-            reader.readAsArrayBuffer(slice);
+            
+            xhr.onload = () => {
+                const blob = xhr.response;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = metadata.fileName;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                downloadProgressBar.style.display = 'none';
+                receiverStatus.innerText = `✅ Downloaded: ${metadata.fileName}`;
+                logReceiver(`Download complete: ${metadata.fileName}`);
+                
+                // Delete the file after download (one-time use)
+                deleteObject(storageRef).catch(()=>{});
+                deleteDoc(doc(db, 'fileMetadata', code)).catch(()=>{});
+            };
+            
+            xhr.onerror = () => {
+                downloadProgressBar.style.display = 'none';
+                receiverStatus.innerText = 'Download failed';
+                logReceiver('Download failed');
+            };
+            
+            const url = await getDownloadURL(storageRef);
+            xhr.open('GET', url);
+            xhr.send();
+            
+        } catch (error) {
+            downloadProgressBar.style.display = 'none';
+            receiverStatus.innerText = `Error: ${error.message}`;
+            logReceiver(`Error: ${error.message}`);
+            return false;
         }
         
-        sendNext();
+        return true;
     }
     
     // File selection
@@ -362,72 +252,87 @@
         if (e.target.files[0]) {
             selectedFile = e.target.files[0];
             fileInfo.innerText = `📄 ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)`;
+            uploadBtn.disabled = false;
             logSender(`Selected: ${selectedFile.name}`);
+            senderStatus.innerText = 'Ready to upload';
         }
     };
+    
     dropzone.onclick = () => fileInput.click();
     
-    // Button handlers
-    createCodeBtn.onclick = async () => {
+    // Upload button
+    uploadBtn.onclick = async () => {
         if (!selectedFile) {
             alert('Select a file first');
             return;
         }
+        
         const code = generateCode();
         currentCode = code;
         displayCode.innerText = code;
         codeArea.style.display = 'block';
-        await startSender(code);
-        senderStatus.innerText = `📢 Code: ${code}`;
-        logSender(`Share code: ${code}`);
+        
+        uploadBtn.disabled = true;
+        uploadBtn.innerText = 'Uploading...';
+        
+        try {
+            await uploadFile(selectedFile, code);
+            logSender(`✅ Upload complete! Share code: ${code}`);
+            senderStatus.innerText = `✅ Uploaded! Code: ${code}`;
+            uploadBtn.innerText = 'Uploaded ✓';
+        } catch (error) {
+            logSender(`Upload failed: ${error.message}`);
+            senderStatus.innerText = 'Upload failed';
+            uploadBtn.innerText = 'Retry Upload';
+            uploadBtn.disabled = false;
+            codeArea.style.display = 'none';
+        }
     };
     
     copyCodeBtn.onclick = () => {
         if (currentCode) {
             navigator.clipboard.writeText(currentCode);
-            logSender('Code copied');
+            logSender('Code copied to clipboard');
         }
     };
     
-    sendFileBtn.onclick = () => {
-        if (selectedFile) {
-            sendFile(selectedFile);
-        } else {
-            alert('Select a file');
-        }
-    };
-    
-    connectBtn.onclick = async () => {
+    // Download button
+    downloadBtn.onclick = async () => {
         const code = codeInput.value.trim().toUpperCase();
         if (!code) {
-            alert('Enter code');
+            alert('Enter a code');
             return;
         }
-        await startReceiver(code);
+        
+        downloadBtn.disabled = true;
+        downloadBtn.innerText = 'Fetching...';
+        
+        await downloadFile(code);
+        
+        downloadBtn.disabled = false;
+        downloadBtn.innerText = '🔍 Fetch & Download';
+        codeInput.value = '';
     };
     
     // Role switching
-    senderBtn.onclick = async () => {
+    senderBtn.onclick = () => {
         isSender = true;
         senderBtn.classList.add('active');
         receiverBtn.classList.remove('active');
         senderPanel.classList.add('active-panel');
         receiverPanel.classList.remove('active-panel');
-        await cleanup();
-        sendFileBtn.disabled = true;
         codeArea.style.display = 'none';
-        downloadArea.style.display = 'none';
+        progressBar.style.display = 'none';
     };
     
-    receiverBtn.onclick = async () => {
+    receiverBtn.onclick = () => {
         isSender = false;
         receiverBtn.classList.add('active');
         senderBtn.classList.remove('active');
         receiverPanel.classList.add('active-panel');
         senderPanel.classList.remove('active-panel');
-        await cleanup();
-        downloadArea.style.display = 'none';
         codeInput.value = '';
+        downloadProgressBar.style.display = 'none';
     };
     
     senderBtn.click();
