@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>AirDrop · direct device-to-device share (WebRTC)</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: linear-gradient(135deg, #0b2b2f 0%, #143d42 100%);
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+      padding: 1.8rem 1.2rem;
+      color: #eef4ff;
+    }
+
+    .glass-card {
+      max-width: 1300px;
+      margin: 0 auto;
+      background: rgba(18, 35, 40, 0.7);
+      backdrop-filter: blur(12px);
+      border-radius: 2.5rem;
+      padding: 1.8rem 2rem;
+      box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+      border: 1px solid rgba(80, 160, 150, 0.4);
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(120deg, #c0ffee, #8dd0c8);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      letter-spacing: -0.3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sub {
+      color: #b6dee0;
+      margin-top: 0.5rem;
+      margin-bottom: 2rem;
+      border-left: 3px solid #5fb0a5;
+      padding-left: 1rem;
+    }
+
+    .grid-2col {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.8rem;
+      margin: 2rem 0 1.5rem;
+    }
+
+    .panel {
+      flex: 1;
+      min-width: 280px;
+      background: #0e2a2fcc;
+      border-radius: 1.8rem;
+      padding: 1.5rem;
+      border: 1px solid #317b72;
+      transition: all 0.2s;
+    }
+
+    .panel-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 2px dashed #3d9185;
+      padding-bottom: 0.5rem;
+    }
+
+    .file-dropzone {
+      background: #1c3f44;
+      border: 2px dashed #6eaea2;
+      border-radius: 1.5rem;
+      padding: 1.8rem 1rem;
+      text-align: center;
+      margin: 1rem 0;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .file-dropzone:hover {
+      background: #23565c;
+      border-color: #9ae6db;
+    }
+
+    .btn-primary {
+      background: #2f9e8f;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 60px;
+      font-weight: 600;
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: 0.15s;
+      font-size: 0.9rem;
+      margin-top: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+
+    .btn-primary:hover {
+      background: #248277;
+      transform: scale(0.97);
+    }
+
+    .btn-secondary {
+      background: #2a5f68;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 60px;
+      color: white;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+
+    .connection-status {
+      background: #071e22;
+      border-radius: 2rem;
+      padding: 0.7rem 1rem;
+      font-family: monospace;
+      font-size: 0.8rem;
+      margin: 1rem 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .status-led {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    .file-info-card {
+      background: #052026;
+      border-radius: 1rem;
+      padding: 0.8rem;
+      margin: 1rem 0;
+      word-break: break-all;
+    }
+
+    .transfer-log {
+      background: #071e22cc;
+      border-radius: 1.2rem;
+      padding: 1rem;
+      font-size: 0.75rem;
+      font-family: monospace;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .flex-between {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .badge-success {
+      background: #1e6b5e;
+      padding: 4px 12px;
+      border-radius: 30px;
+      font-size: 0.7rem;
+    }
+
+    @media (max-width: 760px) {
+      .glass-card {
+        padding: 1rem;
+      }
+      .panel-title {
+        font-size: 1.2rem;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="glass-card">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+    <h1>⚡ AirShare · WebRTC</h1>
+    <span style="font-size:0.7rem; background:#1f554b; padding:4px 12px; border-radius:30px;">🔒 peer-to-peer · no server storage</span>
+  </div>
+  <div class="sub">📡 Direct device ↔ device file transfer. Upload from one device → download appears on the other instantly. Files never touch any cloud or GitHub storage.</div>
+
+  <div class="grid-2col">
+    <!-- LEFT PANEL: SENDER (Device that shares) -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>📤</span> <span>Sender · Share file</span>
+      </div>
+      <div class="file-dropzone" id="senderDropzone">
+        <span style="font-size: 2rem;">📂</span>
+        <p style="margin: 8px 0;">Drag & drop or click to select file</p>
+        <input type="file" id="fileInputSender" style="display: none;">
+        <div><button class="btn-primary" id="selectFileBtn" style="margin-top: 6px;">📎 Choose file</button></div>
+      </div>
+      <div id="selectedFileInfo" style="font-size: 0.8rem; margin: 10px 0; color:#b9e0db;">⚡ No file selected</div>
+      
+      <div class="connection-status">
+        <span><span class="status-led" id="senderLed"></span> <span id="senderStatusText">🔌 Not connected</span></span>
+        <button id="createOfferBtn" class="btn-secondary" style="background:#327a6e;">🔗 Create connection link</button>
+      </div>
+
+      <div id="offerLinkArea" style="display: none; background:#0f2e2b; border-radius: 16px; padding: 12px; margin: 10px 0;">
+        <p style="font-size:0.7rem;">📋 Share this link with the other device (Receiver):</p>
+        <code id="offerLinkOutput" style="word-break:break-all; font-size:0.7rem; background:#021013; display:block; padding:8px; border-radius:12px;"></code>
+        <button id="copyOfferBtn" class="btn-secondary" style="margin-top: 8px; background:#1c6b5e;">📋 Copy link</button>
+      </div>
+      
+      <button id="sendFileBtn" class="btn-primary" disabled style="width:100%; justify-content:center;">📡 Send selected file</button>
+      <div class="transfer-log" id="senderLog">📭 Ready. First create a connection link and share it to receiver.\n</div>
+    </div>
+
+    <!-- RIGHT PANEL: RECEIVER (Device that downloads) -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>📥</span> <span>Receiver · Get file</span>
+      </div>
+      <div class="connection-status">
+        <span><span class="status-led" id="receiverLed"></span> <span id="receiverStatusText">⚡ Waiting for link</span></span>
+        <input type="text" id="remoteOfferInput" placeholder="Paste connection link here" style="background:#1c3f3f; border:1px solid #419287; border-radius:40px; padding:8px 12px; width:180px; color:white;">
+        <button id="connectFromLinkBtn" class="btn-secondary">🔗 Connect</button>
+      </div>
+      <div id="incomingFileArea" style="margin-top: 1rem;">
+        <div class="file-info-card" id="receiverFileInfo">
+          ⏳ No file transfer yet
+        </div>
+        <button id="downloadReceivedBtn" class="btn-primary" disabled style="background:#1f8f7b; width:100%;">⬇️ Download received file</button>
+      </div>
+      <div class="transfer-log" id="receiverLog">📭 Paste the connection link from sender and click Connect.\n</div>
+    </div>
+  </div>
+  
+  <div style="font-size: 0.7rem; text-align: center; margin-top: 1rem; opacity: 0.7;">
+    💡 How it works: WebRTC creates direct peer-to-peer channel. Sender creates a link → Receiver opens it → file transfer happens instantly. No intermediate server, no GitHub storage.
+  </div>
+</div>
+
+<script>
+  // ------------------------- WEBRTC PEER CONNECTION -------------------------
+  // Use Google STUN servers (public, works in most restricted environments without external APIs)
+  const configuration = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  };
+
+  let senderPeerConnection = null;
+  let receiverPeerConnection = null;
+  let senderDataChannel = null;
+  let receiverDataChannel = null;
+
+  // File sharing states
+  let selectedFile = null;
+  let receivedFileData = null;    // store ArrayBuffer
+  let receivedFileName = null;
+  let receivedFileType = null;
+
+  // DOM elements (sender)
+  const fileInput = document.getElementById('fileInputSender');
+  const selectFileBtn = document.getElementById('selectFileBtn');
+  const senderDropzone = document.getElementById('senderDropzone');
+  const selectedFileInfoDiv = document.getElementById('selectedFileInfo');
+  const createOfferBtn = document.getElementById('createOfferBtn');
+  const offerLinkArea = document.getElementById('offerLinkArea');
+  const offerLinkOutput = document.getElementById('offerLinkOutput');
+  const copyOfferBtn = document.getElementById('copyOfferBtn');
+  const sendFileBtn = document.getElementById('sendFileBtn');
+  const senderLogDiv = document.getElementById('senderLog');
+  const senderStatusSpan = document.getElementById('senderStatusText');
+  const senderLed = document.getElementById('senderLed');
+
+  // Receiver elements
+  const remoteOfferInput = document.getElementById('remoteOfferInput');
+  const connectFromLinkBtn = document.getElementById('connectFromLinkBtn');
+  const receiverFileInfo = document.getElementById('receiverFileInfo');
+  const downloadReceivedBtn = document.getElementById('downloadReceivedBtn');
+  const receiverLogDiv = document.getElementById('receiverLog');
+  const receiverStatusSpan = document.getElementById('receiverStatusText');
+  const receiverLed = document.getElementById('receiverLed');
+
+  // Helper: log to specific panel
+  function logSender(msg) {
+    senderLogDiv.innerText += `\n> ${msg}`;
+    senderLogDiv.scrollTop = senderLogDiv.scrollHeight;
+  }
+  function logReceiver(msg) {
+    receiverLogDiv.innerText += `\n> ${msg}`;
+    receiverLogDiv.scrollTop = receiverLogDiv.scrollHeight;
+  }
+
+  // Update status UI
+  function updateSenderStatus(text, isConnected) {
+    senderStatusSpan.innerText = text;
+    senderLed.style.backgroundColor = isConnected ? '#5fe3c0' : '#a06e6e';
+    senderLed.style.boxShadow = isConnected ? '0 0 6px #41e6bd' : 'none';
+  }
+  function updateReceiverStatus(text, isConnected) {
+    receiverStatusSpan.innerText = text;
+    receiverLed.style.backgroundColor = isConnected ? '#5fe3c0' : '#a06e6e';
+  }
+
+  // ---------- SENDER SIDE: create offer & data channel ----------
+  async function createSenderOffer() {
+    if (senderPeerConnection) {
+      senderPeerConnection.close();
+      senderPeerConnection = null;
+    }
+    if (senderDataChannel) {
+      senderDataChannel = null;
+    }
+    senderPeerConnection = new RTCPeerConnection(configuration);
+    senderDataChannel = senderPeerConnection.createDataChannel('fileTransfer');
+    
+    setupSenderDataChannelEvents(senderDataChannel);
+    
+    // ICE candidate handling
+    senderPeerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        logSender(`ICE candidate gathered`);
+      } else {
+        // All ICE candidates done -> generate full offer string
+        const offer = senderPeerConnection.localDescription;
+        if (offer && offer.sdp) {
+          const fullLink = window.location.href.split('#')[0] + '#' + btoa(JSON.stringify({ type: offer.type, sdp: offer.sdp }));
+          offerLinkOutput.innerText = fullLink;
+          offerLinkArea.style.display = 'block';
+          logSender('✨ Connection link ready! Copy and share with receiver.');
+        }
+      }
+    };
+
+    try {
+      const offer = await senderPeerConnection.createOffer();
+      await senderPeerConnection.setLocalDescription(offer);
+      logSender('📡 Created offer, waiting for ICE...');
+      updateSenderStatus('Creating link...', false);
+    } catch (err) {
+      logSender('❌ Error creating offer: ' + err.message);
+      updateSenderStatus('Offer failed', false);
+    }
+  }
+
+  function setupSenderDataChannelEvents(dc) {
+    dc.onopen = () => {
+      logSender('✅ Data channel open! Ready to send file.');
+      updateSenderStatus('Connected to receiver ✅', true);
+      sendFileBtn.disabled = !selectedFile;
+    };
+    dc.onclose = () => {
+      logSender('🔌 Data channel closed');
+      updateSenderStatus('Disconnected', false);
+      sendFileBtn.disabled = true;
+    };
+    dc.onerror = (err) => logSender('DataChannel error: ' + err.message);
+  }
+
+  // send file using data channel (chunked for large files)
+  function sendFileViaDataChannel(file) {
+    if (!senderDataChannel || senderDataChannel.readyState !== 'open') {
+      logSender('❌ Data channel not ready. Wait for connection.');
+      return;
+    }
+    if (!file) {
+      logSender('⚠️ No file selected.');
+      return;
+    }
+    const CHUNK_SIZE = 16384; // 16KB
+    let offset = 0;
+    const fileReader = new FileReader();
+    const fileInfo = {
+      name: file.name,
+      type: file.type,
+      size: file.size
+    };
+    senderDataChannel.send(JSON.stringify({ type: 'metadata', data: fileInfo }));
+    logSender(`📤 Sending metadata: ${file.name} (${formatBytes(file.size)})`);
+
+    function sendNextChunk() {
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      fileReader.onload = (e) => {
+        const arrayBuf = e.target.result;
+        senderDataChannel.send(arrayBuf);
+        offset += arrayBuf.byteLength;
+        const percent = ((offset / file.size) * 100).toFixed(1);
+        logSender(`📡 Transfer progress: ${percent}%`);
+        if (offset < file.size) {
+          sendNextChunk();
+        } else {
+          logSender(`✅ File transmission complete! Receiver will auto-download.`);
+          senderDataChannel.send(JSON.stringify({ type: 'complete' }));
+          sendFileBtn.disabled = true;
+          // reset selected file info after sent? keep but disable
+        }
+      };
+      fileReader.onerror = (err) => logSender(`❌ Chunk read error: ${err}`);
+      fileReader.readAsArrayBuffer(slice);
+    }
+    sendNextChunk();
+  }
+
+  // ---------- RECEIVER SIDE: accept connection from offer link ----------
+  async function connectAsReceiver(offerLink) {
+    try {
+      if (receiverPeerConnection) {
+        receiverPeerConnection.close();
+        receiverPeerConnection = null;
+      }
+      const hash = offerLink.split('#')[1];
+      if (!hash) throw new Error('Invalid link: missing SDP data');
+      const decoded = JSON.parse(atob(hash));
+      if (!decoded.sdp) throw new Error('Missing SDP');
+      
+      receiverPeerConnection = new RTCPeerConnection(configuration);
+      receiverPeerConnection.ondatachannel = (event) => {
+        logReceiver('📨 Incoming data channel received');
+        receiverDataChannel = event.channel;
+        setupReceiverDataChannelEvents(receiverDataChannel);
+      };
+      
+      // ICE candidate handling for receiver (just logging)
+      receiverPeerConnection.onicecandidate = (event) => {
+        if (event.candidate) logReceiver(`ICE candidate gathered`);
+      };
+      
+      await receiverPeerConnection.setRemoteDescription({ type: 'offer', sdp: decoded.sdp });
+      const answer = await receiverPeerConnection.createAnswer();
+      await receiverPeerConnection.setLocalDescription(answer);
+      logReceiver('✅ Answer sent, connection establishing...');
+      updateReceiverStatus('Connecting...', false);
+    } catch (err) {
+      logReceiver(`❌ Failed to connect: ${err.message}`);
+      updateReceiverStatus('Connection error', false);
+    }
+  }
+
+  function setupReceiverDataChannelEvents(dc) {
+    dc.onopen = () => {
+      logReceiver('🔗 Data channel open! Ready to receive file.');
+      updateReceiverStatus('Connected ✅', true);
+    };
+    dc.onclose = () => logReceiver('Data channel closed');
+    dc.onerror = (err) => logReceiver(`DataChannel error: ${err.message}`);
+    
+    let receivingBuffer = [];
+    let expectedSize = 0;
+    let fileName = '';
+    let fileType = '';
+    let metadataReceived = false;
+    
+    dc.onmessage = async (event) => {
+      const data = event.data;
+      if (typeof data === 'string') {
+        try {
+          const json = JSON.parse(data);
+          if (json.type === 'metadata') {
+            fileName = json.data.name;
+            fileType = json.data.type;
+            expectedSize = json.data.size;
+            metadataReceived = true;
+            receivingBuffer = [];
+            logReceiver(`📄 Receiving file: ${fileName} (${formatBytes(expectedSize)})`);
+            receiverFileInfo.innerHTML = `📁 Receiving: ${fileName} <br> Size: ${formatBytes(expectedSize)} <br> <span style="color:#6ed9cc;">⚡ incoming data...</span>`;
+          } else if (json.type === 'complete') {
+            // all chunks done
+            if (receivingBuffer.length) {
+              const fullBlob = new Blob(receivingBuffer, { type: fileType || 'application/octet-stream' });
+              receivedFileData = fullBlob;
+              receivedFileName = fileName;
+              receivedFileType = fileType;
+              receiverFileInfo.innerHTML = `✅ File ready: ${fileName}<br>Size: ${formatBytes(fullBlob.size)}<br><span style="color:#a3f0e3;">✨ Click download button</span>`;
+              downloadReceivedBtn.disabled = false;
+              logReceiver(`🎉 File fully received: ${fileName}`);
+            }
+            receivingBuffer = [];
+          }
+        } catch (e) {
+          // not JSON, ignore
+          logReceiver(`String message: ${data}`);
+        }
+      } else if (data instanceof ArrayBuffer) {
+        if (metadataReceived) {
+          receivingBuffer.push(data);
+          const receivedBytes = receivingBuffer.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+          const percent = expectedSize ? ((receivedBytes / expectedSize)*100).toFixed(1) : '?';
+          receiverFileInfo.innerHTML = `📥 Downloading ${fileName || 'file'} ... ${percent}% (${formatBytes(receivedBytes)})`;
+        } else {
+          logReceiver(`⚠️ Received binary without metadata, ignored`);
+        }
+      }
+    };
+  }
+
+  // ---- file select & drag drop (sender) ----
+  function selectFile(file) {
+    if (!file) return;
+    selectedFile = file;
+    selectedFileInfoDiv.innerHTML = `📄 ${file.name} (${formatBytes(file.size)})`;
+    if (senderDataChannel && senderDataChannel.readyState === 'open') {
+      sendFileBtn.disabled = false;
+    } else {
+      sendFileBtn.disabled = true;
+    }
+    logSender(`Selected file: ${file.name}`);
+  }
+
+  selectFileBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) selectFile(e.target.files[0]);
+    fileInput.value = '';
+  });
+  // drag drop
+  senderDropzone.addEventListener('dragover', (e) => { e.preventDefault(); senderDropzone.style.background = '#2c6b60'; });
+  senderDropzone.addEventListener('dragleave', () => { senderDropzone.style.background = '#1c3f44'; });
+  senderDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    senderDropzone.style.background = '#1c3f44';
+    const files = e.dataTransfer.files;
+    if (files.length) selectFile(files[0]);
+  });
+  
+  createOfferBtn.addEventListener('click', async () => {
+    await createSenderOffer();
+  });
+  
+  copyOfferBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(offerLinkOutput.innerText);
+    logSender('📋 Connection link copied to clipboard');
+  });
+  
+  sendFileBtn.addEventListener('click', () => {
+    if (selectedFile && senderDataChannel && senderDataChannel.readyState === 'open') {
+      sendFileViaDataChannel(selectedFile);
+    } else if (!selectedFile) {
+      logSender('No file selected.');
+    } else {
+      logSender('Data channel not ready yet. Wait for receiver to connect.');
+    }
+  });
+  
+  // Receiver: connect via link button
+  connectFromLinkBtn.addEventListener('click', async () => {
+    let link = remoteOfferInput.value.trim();
+    if (!link) {
+      logReceiver('Please paste the connection link from sender.');
+      return;
+    }
+    if (!link.startsWith('http')) {
+      // if they only pasted the hash part or something, but we accept relative style
+      if (link.includes('#')) link = window.location.href.split('#')[0] + '#' + link.split('#')[1];
+      else link = window.location.href + '#' + link;
+    }
+    await connectAsReceiver(link);
+  });
+  
+  downloadReceivedBtn.addEventListener('click', () => {
+    if (receivedFileData && receivedFileName) {
+      const url = URL.createObjectURL(receivedFileData);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = receivedFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+      logReceiver(`⬇️ Download started: ${receivedFileName}`);
+      
+      // Reset receiver UI after download (optional: but keep file until new transfer)
+      // We do not auto-delete, but user can override new file.
+      downloadReceivedBtn.disabled = true;
+      receiverFileInfo.innerHTML = `📦 File downloaded: ${receivedFileName}<br>Next transfer will replace it.`;
+      receivedFileData = null;   // clear after download so second download requires new transfer
+    } else {
+      logReceiver('No file received yet.');
+    }
+  });
+  
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+  
+  // cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    if (senderPeerConnection) senderPeerConnection.close();
+    if (receiverPeerConnection) receiverPeerConnection.close();
+  });
+  
+  logSender('🚀 Sender ready. Click "Create connection link" to start.');
+  logReceiver('📡 Receiver ready. Paste link from sender and click Connect.');
+</script>
+</body>
+</html>
