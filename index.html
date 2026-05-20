@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AirShare · Firestore Only (No CORS)</title>
+    <title>AirShare · Firestore Only (No Storage)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -40,7 +40,7 @@
 <div class="container">
     <div class="header">
         <h1>⚡ AirShare · Firestore Only</h1>
-        <div class="badge">✅ No CORS · Uses only your Firestore database</div>
+        <div class="badge">✅ No Storage needed · Works with your Firestore database</div>
     </div>
 
     <div class="role-selector">
@@ -50,9 +50,9 @@
 
     <div id="senderPanel" class="panel">
         <h2>📤 Upload & Share a file</h2>
-        <div class="warning">⚠️ Files are stored in Firestore (max 1MB per file). For larger files, use the Storage version.</div>
+        <div class="warning">📝 Files are stored in Firestore. Max size ~1MB per file.</div>
         <div class="file-dropzone" id="senderDropzone">
-            📂 Click to select file (Max 1MB)
+            📂 Click to select file
             <input type="file" id="fileInput" style="display: none;">
         </div>
         <div id="fileInfo" style="margin: 0.5rem 0; font-size: 0.85rem;"></div>
@@ -72,7 +72,7 @@
             </div>
         </div>
         
-        <div class="status-box" id="senderStatus">⚡ Select a file (max 1MB)</div>
+        <div class="status-box" id="senderStatus">⚡ Select a file to share</div>
         <div class="log" id="senderLog">📭 Ready.\n</div>
     </div>
 
@@ -95,7 +95,7 @@
         apiKey: "AIzaSyBhujqx9CZwK_NUrQgcUEX5wxKS0hYjXKc",
         authDomain: "vikash-classes-c98f8.firebaseapp.com",
         projectId: "vikash-classes-c98f8",
-        storageBucket: "vikash-classes-c98f8.firebasestorage.app",
+        storageBucket: "",  // Empty - we're NOT using Storage
         messagingSenderId: "456891384843",
         appId: "1:456891384843:web:cf845b07c2884a4c64b30e"
     };
@@ -113,7 +113,7 @@
     let currentCode = null;
     let currentFileData = null;
     
-    // DOM
+    // DOM elements
     const senderPanel = document.getElementById('senderPanel');
     const receiverPanel = document.getElementById('receiverPanel');
     const senderBtn = document.getElementById('senderRoleBtn');
@@ -154,11 +154,11 @@
         try {
             await signInAnonymously(auth);
             authReady = true;
-            senderStatus.innerText = '✅ Auth ready. Select a file (max 1MB).';
-            receiverStatus.innerText = '✅ Auth ready. Enter code to download.';
-            logSender('Anonymous authentication successful');
-            logReceiver('Anonymous authentication successful');
-            uploadBtn.disabled = !selectedFile;
+            senderStatus.innerText = '✅ Ready! Select a file to share.';
+            receiverStatus.innerText = '✅ Ready! Enter code to download.';
+            logSender('✅ Authentication successful');
+            logReceiver('✅ Authentication successful');
+            if (selectedFile) uploadBtn.disabled = false;
         } catch (error) {
             console.error('Auth error:', error);
             senderStatus.innerText = '❌ Auth failed. Check Firebase settings.';
@@ -175,7 +175,7 @@
                 const base64Data = e.target.result;
                 
                 progressBar.style.display = 'block';
-                progressFill.style.width = '50%';
+                progressFill.style.width = '30%';
                 senderStatus.innerText = 'Storing in Firestore...';
                 
                 try {
@@ -233,8 +233,8 @@
             return;
         }
         
-        if (selectedFile.size > 1048576) { // 1MB limit for Firestore
-            alert('File too large! Firestore has a 1MB limit. For larger files, use the Storage version.');
+        if (selectedFile.size > 1048576) {
+            alert('File too large! Please select a file smaller than 1MB.');
             return;
         }
         
@@ -248,11 +248,11 @@
         
         try {
             await storeFileInFirestore(selectedFile, code);
-            logSender(`✅ File stored in Firestore! Share code: ${code}`);
-            senderStatus.innerText = `✅ Stored! Code: ${code} (expires in 30 min)`;
+            logSender(`✅ File stored! Share code: ${code}`);
+            senderStatus.innerText = `✅ Ready! Code: ${code}`;
             uploadBtn.innerText = 'Stored ✓';
         } catch (error) {
-            logSender(`Store failed: ${error.message}`);
+            logSender(`❌ Store failed: ${error.message}`);
             senderStatus.innerText = 'Store failed';
             uploadBtn.innerText = 'Retry';
             uploadBtn.disabled = false;
@@ -325,7 +325,8 @@
         downloadArea.style.display = 'none';
         
         // Delete the file from Firestore after download
-        deleteFileFromFirestore(codeInput.value.trim().toUpperCase());
+        const code = codeInput.value.trim().toUpperCase();
+        if (code) deleteFileFromFirestore(code);
         currentFileData = null;
     };
     
@@ -334,13 +335,15 @@
         if (e.target.files[0]) {
             selectedFile = e.target.files[0];
             const sizeKB = (selectedFile.size / 1024).toFixed(1);
-            fileInfo.innerText = `📄 ${selectedFile.name} (${sizeKB} KB)`;
+            const sizeMB = (selectedFile.size / 1048576).toFixed(2);
             
             if (selectedFile.size > 1048576) {
+                fileInfo.innerHTML = `⚠️ ${selectedFile.name} (${sizeKB} KB) - TOO LARGE (max 1MB)`;
                 fileInfo.style.color = '#e74c3c';
                 uploadBtn.disabled = true;
-                senderStatus.innerText = '❌ File too large! Max 1MB for Firestore.';
+                senderStatus.innerText = '❌ File too large! Max 1MB.';
             } else {
+                fileInfo.innerHTML = `📄 ${selectedFile.name} (${sizeKB} KB)`;
                 fileInfo.style.color = '#e0f2f0';
                 uploadBtn.disabled = !authReady;
                 senderStatus.innerText = authReady ? 'Ready to store' : 'Waiting for auth...';
@@ -372,6 +375,7 @@
         downloadArea.style.display = 'none';
     };
     
+    // Start
     senderBtn.click();
     initAuth();
 </script>
