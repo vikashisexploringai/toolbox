@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AirShare · Firebase Storage (Works 100%)</title>
+    <title>AirShare · Firestore Only (No CORS)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -33,13 +33,14 @@
         .log { font-family: monospace; font-size: 0.7rem; background: #051a1a; border-radius: 1rem; padding: 0.8rem; max-height: 150px; overflow-y: auto; margin-top: 1rem; }
         .progress-bar { width: 100%; height: 8px; background: #1a4a44; border-radius: 4px; margin: 10px 0; overflow: hidden; }
         .progress-fill { height: 100%; background: #2ecc71; width: 0%; transition: width 0.3s; }
+        .warning { background: #5e3a1a; padding: 0.5rem; border-radius: 0.5rem; font-size: 0.7rem; margin-bottom: 1rem; text-align: center; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>⚡ AirShare · Firebase Storage</h1>
-        <div class="badge">✅ 100% reliable · Files stored temporarily in Firebase Storage</div>
+        <h1>⚡ AirShare · Firestore Only</h1>
+        <div class="badge">✅ No CORS · Uses only your Firestore database</div>
     </div>
 
     <div class="role-selector">
@@ -49,8 +50,9 @@
 
     <div id="senderPanel" class="panel">
         <h2>📤 Upload & Share a file</h2>
+        <div class="warning">⚠️ Files are stored in Firestore (max 1MB per file). For larger files, use the Storage version.</div>
         <div class="file-dropzone" id="senderDropzone">
-            📂 Click to select file
+            📂 Click to select file (Max 1MB)
             <input type="file" id="fileInput" style="display: none;">
         </div>
         <div id="fileInfo" style="margin: 0.5rem 0; font-size: 0.85rem;"></div>
@@ -59,18 +61,18 @@
             <div class="progress-fill" id="progressFill"></div>
         </div>
         
-        <button id="uploadBtn" disabled style="width: 100%; margin: 0.5rem 0;">🚀 Upload to Cloud</button>
+        <button id="uploadBtn" disabled style="width: 100%; margin: 0.5rem 0;">🚀 Generate Code & Store</button>
         
         <div id="codeArea" style="display: none;">
             <div class="code-card">
-                <p>✨ File uploaded! Share this code:</p>
+                <p>✨ File stored! Share this code:</p>
                 <div class="big-code" id="displayCode">----</div>
                 <button id="copyCodeBtn">📋 Copy Code</button>
-                <p style="font-size: 0.7rem; margin-top: 10px;">Code expires in 1 hour</p>
+                <p style="font-size: 0.7rem; margin-top: 10px;">Code expires in 30 minutes</p>
             </div>
         </div>
         
-        <div class="status-box" id="senderStatus">⚡ Select a file to start</div>
+        <div class="status-box" id="senderStatus">⚡ Select a file (max 1MB)</div>
         <div class="log" id="senderLog">📭 Ready.\n</div>
     </div>
 
@@ -80,10 +82,10 @@
             <input type="text" id="codeInput" placeholder="Enter 6-char code" maxlength="8" style="text-transform: uppercase;">
             <button id="downloadBtn">🔍 Fetch & Download</button>
         </div>
-        <div class="progress-bar" id="downloadProgressBar" style="display: none;">
-            <div class="progress-fill" id="downloadProgressFill"></div>
-        </div>
         <div class="status-box" id="receiverStatus">⏳ Enter code to download</div>
+        <div id="downloadArea" style="display: none;">
+            <button id="saveBtn" style="width: 100%; margin: 1rem 0;">⬇️ Save File</button>
+        </div>
         <div class="log" id="receiverLog">📭 Enter code to retrieve file.\n</div>
     </div>
 </div>
@@ -99,17 +101,17 @@
     };
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js';
-    import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-storage.js';
+    import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js';
     import { getFirestore, doc, setDoc, getDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js';
     
     const app = initializeApp(firebaseConfig);
-    const storage = getStorage(app);
+    const auth = getAuth(app);
     const db = getFirestore(app, 'shortener');
     
-    // State
+    let authReady = false;
     let selectedFile = null;
     let currentCode = null;
-    let isSender = true;
+    let currentFileData = null;
     
     // DOM
     const senderPanel = document.getElementById('senderPanel');
@@ -128,11 +130,11 @@
     const downloadBtn = document.getElementById('downloadBtn');
     const receiverStatus = document.getElementById('receiverStatus');
     const receiverLog = document.getElementById('receiverLog');
+    const saveBtn = document.getElementById('saveBtn');
+    const downloadArea = document.getElementById('downloadArea');
     const dropzone = document.getElementById('senderDropzone');
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
-    const downloadProgressBar = document.getElementById('downloadProgressBar');
-    const downloadProgressFill = document.getElementById('downloadProgressFill');
     
     function logSender(msg) { senderLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; senderLog.scrollTop = senderLog.scrollHeight; }
     function logReceiver(msg) { receiverLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; receiverLog.scrollTop = receiverLog.scrollHeight; }
@@ -144,126 +146,95 @@
         return code;
     }
     
-    async function uploadFile(file, code) {
-        const storageRef = ref(storage, `shares/${code}/${file.name}`);
-        const uploadTask = uploadBytesResumable(storageRef, file);
+    // Initialize anonymous auth
+    async function initAuth() {
+        senderStatus.innerText = '🔐 Authenticating...';
+        receiverStatus.innerText = '🔐 Authenticating...';
         
-        progressBar.style.display = 'block';
-        
+        try {
+            await signInAnonymously(auth);
+            authReady = true;
+            senderStatus.innerText = '✅ Auth ready. Select a file (max 1MB).';
+            receiverStatus.innerText = '✅ Auth ready. Enter code to download.';
+            logSender('Anonymous authentication successful');
+            logReceiver('Anonymous authentication successful');
+            uploadBtn.disabled = !selectedFile;
+        } catch (error) {
+            console.error('Auth error:', error);
+            senderStatus.innerText = '❌ Auth failed. Check Firebase settings.';
+            receiverStatus.innerText = '❌ Auth failed. Check Firebase settings.';
+            logSender(`Auth error: ${error.message}`);
+            logReceiver(`Auth error: ${error.message}`);
+        }
+    }
+    
+    async function storeFileInFirestore(file, code) {
         return new Promise((resolve, reject) => {
-            uploadTask.on('state_changed',
-                (snapshot) => {
-                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                    progressFill.style.width = `${progress}%`;
-                    senderStatus.innerText = `Uploading: ${Math.round(progress)}%`;
-                },
-                (error) => {
-                    logSender(`Upload error: ${error.message}`);
-                    reject(error);
-                },
-                async () => {
-                    const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                    // Store metadata in Firestore
-                    await setDoc(doc(db, 'fileMetadata', code), {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const base64Data = e.target.result;
+                
+                progressBar.style.display = 'block';
+                progressFill.style.width = '50%';
+                senderStatus.innerText = 'Storing in Firestore...';
+                
+                try {
+                    await setDoc(doc(db, 'fileShares', code), {
                         fileName: file.name,
                         fileType: file.type,
                         fileSize: file.size,
-                        storagePath: `shares/${code}/${file.name}`,
-                        downloadURL: downloadURL,
+                        fileData: base64Data,
                         createdAt: Date.now(),
-                        expiresAt: Date.now() + 3600000 // 1 hour
+                        expiresAt: Date.now() + 1800000 // 30 minutes
                     });
-                    progressBar.style.display = 'none';
-                    resolve(downloadURL);
+                    
+                    progressFill.style.width = '100%';
+                    setTimeout(() => {
+                        progressBar.style.display = 'none';
+                        progressFill.style.width = '0%';
+                    }, 500);
+                    
+                    resolve();
+                } catch (error) {
+                    reject(error);
                 }
-            );
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
         });
     }
     
-    async function downloadFile(code) {
-        const metadataDoc = await getDoc(doc(db, 'fileMetadata', code));
-        if (!metadataDoc.exists()) {
-            receiverStatus.innerText = `❌ Code "${code}" not found or expired`;
-            logReceiver(`Code not found: ${code}`);
-            return false;
+    async function retrieveFileFromFirestore(code) {
+        const docRef = doc(db, 'fileShares', code);
+        const docSnap = await getDoc(docRef);
+        
+        if (!docSnap.exists()) {
+            return null;
         }
         
-        const metadata = metadataDoc.data();
-        receiverStatus.innerText = `Found: ${metadata.fileName} (${(metadata.fileSize/1024).toFixed(1)} KB)`;
-        logReceiver(`Found file: ${metadata.fileName}`);
+        const data = docSnap.data();
         
-        // Download from Storage
-        const storageRef = ref(storage, metadata.storagePath);
-        
-        try {
-            downloadProgressBar.style.display = 'block';
-            
-            const xhr = new XMLHttpRequest();
-            xhr.responseType = 'blob';
-            
-            xhr.onprogress = (event) => {
-                if (event.lengthComputable) {
-                    const percent = (event.loaded / event.total) * 100;
-                    downloadProgressFill.style.width = `${percent}%`;
-                    receiverStatus.innerText = `Downloading: ${Math.round(percent)}%`;
-                }
-            };
-            
-            xhr.onload = () => {
-                const blob = xhr.response;
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = metadata.fileName;
-                a.click();
-                URL.revokeObjectURL(url);
-                
-                downloadProgressBar.style.display = 'none';
-                receiverStatus.innerText = `✅ Downloaded: ${metadata.fileName}`;
-                logReceiver(`Download complete: ${metadata.fileName}`);
-                
-                // Delete the file after download (one-time use)
-                deleteObject(storageRef).catch(()=>{});
-                deleteDoc(doc(db, 'fileMetadata', code)).catch(()=>{});
-            };
-            
-            xhr.onerror = () => {
-                downloadProgressBar.style.display = 'none';
-                receiverStatus.innerText = 'Download failed';
-                logReceiver('Download failed');
-            };
-            
-            const url = await getDownloadURL(storageRef);
-            xhr.open('GET', url);
-            xhr.send();
-            
-        } catch (error) {
-            downloadProgressBar.style.display = 'none';
-            receiverStatus.innerText = `Error: ${error.message}`;
-            logReceiver(`Error: ${error.message}`);
-            return false;
+        // Check expiry
+        if (data.expiresAt < Date.now()) {
+            await deleteDoc(docRef);
+            return null;
         }
         
-        return true;
+        return data;
     }
     
-    // File selection
-    fileInput.onchange = (e) => {
-        if (e.target.files[0]) {
-            selectedFile = e.target.files[0];
-            fileInfo.innerText = `📄 ${selectedFile.name} (${(selectedFile.size/1024).toFixed(1)} KB)`;
-            uploadBtn.disabled = false;
-            logSender(`Selected: ${selectedFile.name}`);
-            senderStatus.innerText = 'Ready to upload';
-        }
-    };
+    async function deleteFileFromFirestore(code) {
+        await deleteDoc(doc(db, 'fileShares', code)).catch(() => {});
+    }
     
-    dropzone.onclick = () => fileInput.click();
-    
-    // Upload button
     uploadBtn.onclick = async () => {
         if (!selectedFile) {
             alert('Select a file first');
+            return;
+        }
+        
+        if (selectedFile.size > 1048576) { // 1MB limit for Firestore
+            alert('File too large! Firestore has a 1MB limit. For larger files, use the Storage version.');
             return;
         }
         
@@ -273,17 +244,17 @@
         codeArea.style.display = 'block';
         
         uploadBtn.disabled = true;
-        uploadBtn.innerText = 'Uploading...';
+        uploadBtn.innerText = 'Storing...';
         
         try {
-            await uploadFile(selectedFile, code);
-            logSender(`✅ Upload complete! Share code: ${code}`);
-            senderStatus.innerText = `✅ Uploaded! Code: ${code}`;
-            uploadBtn.innerText = 'Uploaded ✓';
+            await storeFileInFirestore(selectedFile, code);
+            logSender(`✅ File stored in Firestore! Share code: ${code}`);
+            senderStatus.innerText = `✅ Stored! Code: ${code} (expires in 30 min)`;
+            uploadBtn.innerText = 'Stored ✓';
         } catch (error) {
-            logSender(`Upload failed: ${error.message}`);
-            senderStatus.innerText = 'Upload failed';
-            uploadBtn.innerText = 'Retry Upload';
+            logSender(`Store failed: ${error.message}`);
+            senderStatus.innerText = 'Store failed';
+            uploadBtn.innerText = 'Retry';
             uploadBtn.disabled = false;
             codeArea.style.display = 'none';
         }
@@ -292,11 +263,10 @@
     copyCodeBtn.onclick = () => {
         if (currentCode) {
             navigator.clipboard.writeText(currentCode);
-            logSender('Code copied to clipboard');
+            logSender('Code copied');
         }
     };
     
-    // Download button
     downloadBtn.onclick = async () => {
         const code = codeInput.value.trim().toUpperCase();
         if (!code) {
@@ -306,36 +276,104 @@
         
         downloadBtn.disabled = true;
         downloadBtn.innerText = 'Fetching...';
+        receiverStatus.innerText = `Looking for code ${code}...`;
+        logReceiver(`Fetching code: ${code}`);
         
-        await downloadFile(code);
+        const fileData = await retrieveFileFromFirestore(code);
+        
+        if (!fileData) {
+            receiverStatus.innerText = `❌ Code "${code}" not found or expired`;
+            logReceiver(`Code not found: ${code}`);
+            downloadBtn.disabled = false;
+            downloadBtn.innerText = '🔍 Fetch & Download';
+            return;
+        }
+        
+        receiverStatus.innerText = `✅ Found: ${fileData.fileName} (${(fileData.fileSize/1024).toFixed(1)} KB)`;
+        logReceiver(`Found: ${fileData.fileName}`);
+        
+        currentFileData = fileData;
+        downloadArea.style.display = 'block';
+        receiverStatus.innerText = `Click Save File to download ${fileData.fileName}`;
         
         downloadBtn.disabled = false;
         downloadBtn.innerText = '🔍 Fetch & Download';
         codeInput.value = '';
     };
     
+    saveBtn.onclick = () => {
+        if (!currentFileData) return;
+        
+        // Convert base64 to blob
+        const byteString = atob(currentFileData.fileData.split(',')[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+        }
+        const blob = new Blob([ab], { type: currentFileData.fileType });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = currentFileData.fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        logReceiver(`✅ Downloaded: ${currentFileData.fileName}`);
+        receiverStatus.innerText = 'Download complete!';
+        downloadArea.style.display = 'none';
+        
+        // Delete the file from Firestore after download
+        deleteFileFromFirestore(codeInput.value.trim().toUpperCase());
+        currentFileData = null;
+    };
+    
+    // File selection
+    fileInput.onchange = (e) => {
+        if (e.target.files[0]) {
+            selectedFile = e.target.files[0];
+            const sizeKB = (selectedFile.size / 1024).toFixed(1);
+            fileInfo.innerText = `📄 ${selectedFile.name} (${sizeKB} KB)`;
+            
+            if (selectedFile.size > 1048576) {
+                fileInfo.style.color = '#e74c3c';
+                uploadBtn.disabled = true;
+                senderStatus.innerText = '❌ File too large! Max 1MB for Firestore.';
+            } else {
+                fileInfo.style.color = '#e0f2f0';
+                uploadBtn.disabled = !authReady;
+                senderStatus.innerText = authReady ? 'Ready to store' : 'Waiting for auth...';
+            }
+            
+            logSender(`Selected: ${selectedFile.name} (${sizeKB} KB)`);
+        }
+    };
+    
+    dropzone.onclick = () => fileInput.click();
+    
     // Role switching
     senderBtn.onclick = () => {
-        isSender = true;
         senderBtn.classList.add('active');
         receiverBtn.classList.remove('active');
         senderPanel.classList.add('active-panel');
         receiverPanel.classList.remove('active-panel');
         codeArea.style.display = 'none';
         progressBar.style.display = 'none';
+        downloadArea.style.display = 'none';
     };
     
     receiverBtn.onclick = () => {
-        isSender = false;
         receiverBtn.classList.add('active');
         senderBtn.classList.remove('active');
         receiverPanel.classList.add('active-panel');
         senderPanel.classList.remove('active-panel');
         codeInput.value = '';
-        downloadProgressBar.style.display = 'none';
+        downloadArea.style.display = 'none';
     };
     
     senderBtn.click();
+    initAuth();
 </script>
 </body>
 </html>
