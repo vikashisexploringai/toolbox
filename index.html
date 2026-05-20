@@ -3,201 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>AirShare · Short Code File Transfer (Firebase + WebRTC)</title>
+    <title>AirShare · Short Code Transfer</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             background: linear-gradient(135deg, #0a2a2a 0%, #0d3d3d 100%);
-            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             min-height: 100vh;
             padding: 1.5rem;
             color: #e0f2f0;
         }
-
-        .container {
-            max-width: 1300px;
-            margin: 0 auto;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-
-        h1 {
-            font-size: 2.2rem;
-            background: linear-gradient(120deg, #a8ffec, #4fc3b7);
-            background-clip: text;
-            -webkit-background-clip: text;
-            color: transparent;
-            letter-spacing: -0.5px;
-        }
-
-        .badge {
-            display: inline-block;
-            background: #1e6b5e;
-            padding: 0.3rem 1rem;
-            border-radius: 40px;
-            font-size: 0.7rem;
-            margin-top: 0.5rem;
-        }
-
-        .role-selector {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-        }
-
-        .role-btn {
-            background: #1c4f4a;
-            border: none;
-            padding: 0.7rem 1.8rem;
-            border-radius: 60px;
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: 0.2s;
-            font-size: 1rem;
-        }
-
-        .role-btn.active {
-            background: #2ecc71;
-            color: #0a2a2a;
-            box-shadow: 0 0 12px #2ecc71;
-        }
-
-        .panel {
-            background: rgba(18, 45, 45, 0.85);
-            backdrop-filter: blur(12px);
-            border-radius: 2rem;
-            padding: 1.8rem;
-            border: 1px solid #4fc3b7;
-            display: none;
-            margin-bottom: 1rem;
-        }
-
-        .panel.active-panel {
-            display: block;
-        }
-
-        .code-card {
-            background: #0a2a2a;
-            border-radius: 1.5rem;
-            padding: 1.5rem;
-            text-align: center;
-            margin: 1.5rem 0;
-        }
-
-        .big-code {
-            font-size: 3.2rem;
-            font-weight: 800;
-            letter-spacing: 6px;
-            font-family: monospace;
-            background: linear-gradient(135deg, #2ecc71, #4fc3b7);
-            background-clip: text;
-            -webkit-background-clip: text;
-            color: transparent;
-            word-break: break-all;
-        }
-
-        .flex-input {
-            display: flex;
-            gap: 0.6rem;
-            margin: 1rem 0;
-            flex-wrap: wrap;
-        }
-
-        .flex-input input {
-            flex: 2;
-            padding: 0.9rem;
-            font-size: 1.2rem;
-            text-align: center;
-            font-family: monospace;
-            background: #0a2a2a;
-            border: 2px solid #4fc3b7;
-            border-radius: 1rem;
-            color: #2ecc71;
-        }
-
-        button {
-            background: #2ecc71;
-            border: none;
-            padding: 0.7rem 1.5rem;
-            border-radius: 60px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: 0.15s;
-            font-size: 0.9rem;
-        }
-
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .file-dropzone {
-            border: 2px dashed #4fc3b7;
-            border-radius: 1.2rem;
-            padding: 1.2rem;
-            text-align: center;
-            margin: 1rem 0;
-            cursor: pointer;
-            background: #0e3530;
-        }
-
-        .status-box {
-            padding: 0.7rem;
-            border-radius: 1rem;
-            margin: 1rem 0;
-            font-size: 0.85rem;
-            background: #0a2a2a;
-            font-family: monospace;
-        }
-
-        .log {
-            font-family: monospace;
-            font-size: 0.7rem;
-            background: #051a1a;
-            border-radius: 1rem;
-            padding: 0.8rem;
-            max-height: 150px;
-            overflow-y: auto;
-            margin-top: 1rem;
-        }
-
-        .info-note {
-            background: #1e5a50;
-            border-radius: 1rem;
-            padding: 0.6rem;
-            font-size: 0.7rem;
-            margin-top: 1rem;
-            text-align: center;
-        }
-        hr {
-            border-color: #2e6b63;
-            margin: 1rem 0;
-        }
-        .copy-btn {
-            background: #1f6e5e;
-            margin-left: 0.5rem;
-        }
-        @media (max-width: 680px) {
-            .big-code { font-size: 1.8rem; letter-spacing: 2px; }
-        }
+        .container { max-width: 1300px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 2rem; }
+        h1 { font-size: 2.2rem; background: linear-gradient(120deg, #a8ffec, #4fc3b7); background-clip: text; -webkit-background-clip: text; color: transparent; }
+        .badge { display: inline-block; background: #1e6b5e; padding: 0.3rem 1rem; border-radius: 40px; font-size: 0.7rem; margin-top: 0.5rem; }
+        .role-selector { display: flex; gap: 1rem; justify-content: center; margin-bottom: 2rem; flex-wrap: wrap; }
+        .role-btn { background: #1c4f4a; border: none; padding: 0.7rem 1.8rem; border-radius: 60px; color: white; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 1rem; }
+        .role-btn.active { background: #2ecc71; color: #0a2a2a; box-shadow: 0 0 12px #2ecc71; }
+        .panel { background: rgba(18, 45, 45, 0.85); backdrop-filter: blur(12px); border-radius: 2rem; padding: 1.8rem; border: 1px solid #4fc3b7; display: none; margin-bottom: 1rem; }
+        .panel.active-panel { display: block; }
+        .code-card { background: #0a2a2a; border-radius: 1.5rem; padding: 1.5rem; text-align: center; margin: 1.5rem 0; }
+        .big-code { font-size: 3.2rem; font-weight: 800; letter-spacing: 6px; font-family: monospace; background: linear-gradient(135deg, #2ecc71, #4fc3b7); background-clip: text; -webkit-background-clip: text; color: transparent; word-break: break-all; }
+        .flex-input { display: flex; gap: 0.6rem; margin: 1rem 0; flex-wrap: wrap; }
+        .flex-input input { flex: 2; padding: 0.9rem; font-size: 1.2rem; text-align: center; font-family: monospace; background: #0a2a2a; border: 2px solid #4fc3b7; border-radius: 1rem; color: #2ecc71; }
+        button { background: #2ecc71; border: none; padding: 0.7rem 1.5rem; border-radius: 60px; font-weight: bold; cursor: pointer; transition: 0.15s; font-size: 0.9rem; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .file-dropzone { border: 2px dashed #4fc3b7; border-radius: 1.2rem; padding: 1.2rem; text-align: center; margin: 1rem 0; cursor: pointer; background: #0e3530; }
+        .status-box { padding: 0.7rem; border-radius: 1rem; margin: 1rem 0; font-size: 0.85rem; background: #0a2a2a; font-family: monospace; }
+        .log { font-family: monospace; font-size: 0.7rem; background: #051a1a; border-radius: 1rem; padding: 0.8rem; max-height: 150px; overflow-y: auto; margin-top: 1rem; }
+        .info-note { background: #1e5a50; border-radius: 1rem; padding: 0.6rem; font-size: 0.7rem; margin-top: 1rem; text-align: center; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
         <h1>⚡ AirShare · Short Code Transfer</h1>
-        <div class="badge">🔐 Firebase short links + WebRTC direct transfer · No QR needed</div>
+        <div class="badge">🔐 Using your "shortener" Firestore database (test mode)</div>
     </div>
 
     <div class="role-selector">
@@ -205,7 +46,6 @@
         <button class="role-btn" id="receiverRoleBtn">📥 I'm Receiver (Get file)</button>
     </div>
 
-    <!-- SENDER PANEL -->
     <div id="senderPanel" class="panel">
         <h2>📤 Send a file</h2>
         <div class="file-dropzone" id="senderDropzone">
@@ -213,28 +53,21 @@
             <input type="file" id="fileInput" style="display: none;">
         </div>
         <div id="fileInfo" style="margin: 0.5rem 0; font-size: 0.85rem;"></div>
-
-        <button id="createShortLinkBtn" style="width: 100%; margin: 0.5rem 0;">🔗 Generate Short Code (Firebase)</button>
-
+        <button id="createShortLinkBtn" style="width: 100%; margin: 0.5rem 0;">🔗 Generate Short Code</button>
         <div id="shortCodeArea" style="display: none;">
             <div class="code-card">
                 <p>✨ Share this short code with receiver:</p>
                 <div class="big-code" id="generatedShortCode">----</div>
-                <div style="margin-top: 10px;">
-                    <button id="copyCodeBtn">📋 Copy Code</button>
-                    <button id="refreshCodeBtn" style="background:#3d8f7a;">🔄 New Code</button>
-                </div>
-                <p style="font-size: 0.7rem; margin-top: 12px;">Receiver will enter this code on the same page → automatic WebRTC connection</p>
+                <button id="copyCodeBtn">📋 Copy Code</button>
+                <button id="refreshCodeBtn" style="background:#3d8f7a;">🔄 New Code</button>
             </div>
         </div>
-
-        <div class="status-box" id="senderStatus">⚡ Waiting for receiver to connect using the code...</div>
+        <div class="status-box" id="senderStatus">⚡ Waiting for receiver to connect...</div>
         <button id="sendFileBtn" disabled style="width: 100%;">📡 Send File (waiting for connection)</button>
         <div class="log" id="senderLog">📭 Ready. Select a file → Generate short code → Share the 6-char code.\n</div>
-        <div class="info-note">💡 Firestore stores the WebRTC offer temporarily. Receiver fetches it using the short code. No backend servers, peer-to-peer file transfer.</div>
+        <div class="info-note">💡 Using Firestore database: "shortener" - completely separate from your (default) database.</div>
     </div>
 
-    <!-- RECEIVER PANEL -->
     <div id="receiverPanel" class="panel">
         <h2>📥 Receive a file</h2>
         <p>Enter the 6‑character code from the sender:</p>
@@ -244,46 +77,37 @@
         </div>
         <div class="status-box" id="receiverStatus">⏳ Enter code to fetch WebRTC offer</div>
         <div id="receiverFileArea" style="display: none;">
-            <div class="file-dropzone" style="background: #0d3530; cursor: default;">
-                📥 File transfer ready...
-            </div>
+            <div class="file-dropzone" style="background: #0d3530; cursor: default;">📥 File transfer ready...</div>
             <button id="downloadReceivedBtn" disabled style="width: 100%; margin: 1rem 0;">⬇️ Download Received File</button>
         </div>
         <div class="log" id="receiverLog">📭 Paste the 6‑character code given by the sender and click Connect.\n</div>
-        <div class="info-note">🔒 The code fetches the encrypted WebRTC offer from Firebase. Connection is direct P2P after that.</div>
     </div>
 </div>
 
-<!-- Firebase SDK (CDN - no download, works directly) -->
 <script type="module">
-    // ***************************** FIREBASE CONFIGURATION *****************************
-    // 🔥 REPLACE WITH YOUR ACTUAL FIREBASE CONFIG (from Firebase Console > Project Settings)
-    // This is a DEMO config – IT WILL NOT WORK. You MUST replace with your own.
-  const firebaseConfig = {
-  apiKey: "AIzaSyDnju_f-oMxTRaXAwe5nfTlbp7IxS3ojKw",
-  authDomain: "my-shortener-d87af.firebaseapp.com",
-  projectId: "my-shortener-d87af",
-  storageBucket: "my-shortener-d87af.firebasestorage.app",
-  messagingSenderId: "934023606127",
-  appId: "1:934023606127:web:e0f477bfd756997264c29a"
-};
-    // *********************************************************************************
+    // ========== YOUR FIREBASE CONFIG ==========
+    const firebaseConfig = {
+        apiKey: "AIzaSyBhujqx9CZwK_NUrQgcUEX5wxKS0hYjXKc",
+        authDomain: "vikash-classes-c98f8.firebaseapp.com",
+        projectId: "vikash-classes-c98f8",
+        storageBucket: "vikash-classes-c98f8.firebasestorage.app",
+        messagingSenderId: "456891384843",
+        appId: "1:456891384843:web:cf845b07c2884a4c64b30e"
+    };
+    
+    // CONNECTING TO YOUR "shortener" DATABASE (already created in test mode)
+    const DATABASE_ID = "shortener";
+    // ===========================================
     
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js';
     import { getFirestore, doc, setDoc, getDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js';
     
-    // Initialize Firebase (will fail if config not replaced)
-    let db;
-    try {
-        const app = initializeApp(firebaseConfig);
-        db = getFirestore(app);
-        console.log("Firebase initialized");
-    } catch (e) {
-        alert("⚠️ Firebase configuration missing. Please replace firebaseConfig with your own project credentials (see comments in code).");
-        console.error(e);
-    }
+    const app = initializeApp(firebaseConfig);
+    // KEY: Connecting to your 'shortener' database, not the default one
+    const db = getFirestore(app, DATABASE_ID);
+    console.log(`✅ Firebase connected to database: ${DATABASE_ID}`);
     
-    // -------------------- WebRTC & File Transfer Logic --------------------
+    // -------------------- WebRTC Logic --------------------
     const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
     
     let localPeerConnection = null;
@@ -293,7 +117,6 @@
     let selectedFile = null;
     let receivedFileBlob = null;
     let receivedFileName = null;
-    let activeOfferListener = null;   // for sender cleaning
     
     // DOM elements
     const senderPanel = document.getElementById('senderPanel');
@@ -321,26 +144,6 @@
     function logSender(msg) { senderLogDiv.innerText += `\n> ${msg}`; senderLogDiv.scrollTop = senderLogDiv.scrollHeight; }
     function logReceiver(msg) { receiverLogDiv.innerText += `\n> ${msg}`; receiverLogDiv.scrollTop = receiverLogDiv.scrollHeight; }
     
-    // Reset connection helper
-    async function resetSenderConnection() {
-        if (localPeerConnection) localPeerConnection.close();
-        localPeerConnection = null;
-        dataChannel = null;
-        sendFileBtn.disabled = true;
-        sendFileBtn.innerText = '📡 Send File (waiting for connection)';
-        senderStatusDiv.innerText = '⚡ Waiting for receiver to connect using the code...';
-    }
-    
-    function resetReceiverUI() {
-        if (localPeerConnection) localPeerConnection.close();
-        localPeerConnection = null;
-        dataChannel = null;
-        receiverFileArea.style.display = 'none';
-        downloadReceivedBtn.disabled = true;
-        receivedFileBlob = null;
-    }
-    
-    // ---- helper: generate 6-char code ----
     function generateShortCode() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
         let code = '';
@@ -348,36 +151,34 @@
         return code;
     }
     
-    // ---- SENDER: create WebRTC offer and store in Firebase under the short code ----
     async function createAndStoreOffer(shortCode) {
-        await resetSenderConnection();
-        if (!db) throw new Error("Firebase not configured");
-        
+        if (localPeerConnection) localPeerConnection.close();
         localPeerConnection = new RTCPeerConnection(configuration);
         dataChannel = localPeerConnection.createDataChannel('fileTransfer');
-        setupDataChannelForSender(dataChannel);
         
-        // ICE candidates collection -> once done, store offer in Firestore
-        let offerGenerated = false;
+        dataChannel.onopen = () => {
+            logSender('🔗 Data channel open! Receiver connected.');
+            senderStatusDiv.innerText = '✅ Receiver connected! Send the file.';
+            sendFileBtn.disabled = !selectedFile;
+        };
+        dataChannel.onclose = () => {
+            logSender('⚠️ Data channel closed');
+            sendFileBtn.disabled = true;
+        };
+        
+        let offerStored = false;
         localPeerConnection.onicecandidate = async (event) => {
-            if (!event.candidate && !offerGenerated) {
-                offerGenerated = true;
+            if (!event.candidate && !offerStored) {
+                offerStored = true;
                 const offer = localPeerConnection.localDescription;
-                if (offer && db) {
-                    const offerData = { type: offer.type, sdp: offer.sdp, timestamp: Date.now() };
-                    try {
-                        await setDoc(doc(db, "webrtcOffers", shortCode), {
-                            offer: offerData,
-                            createdAt: Date.now(),
-                            used: false
-                        });
-                        logSender(`✅ Offer stored in Firebase with code: ${shortCode}`);
-                        senderStatusDiv.innerText = `✅ Ready! Share code: ${shortCode}`;
-                        // enable send after receiver connects
-                    } catch (err) {
-                        logSender(`❌ Firebase store error: ${err.message}`);
-                        senderStatusDiv.innerText = 'Firebase error. Check config.';
-                    }
+                if (offer) {
+                    // Storing in your 'shortener' database, 'webrtcOffers' collection
+                    await setDoc(doc(db, "webrtcOffers", shortCode), {
+                        offer: { type: offer.type, sdp: offer.sdp },
+                        createdAt: Date.now()
+                    });
+                    logSender(`✅ Offer stored in "shortener" database with code: ${shortCode}`);
+                    senderStatusDiv.innerText = `✅ Ready! Share code: ${shortCode}`;
                 }
             }
         };
@@ -385,290 +186,94 @@
         const offer = await localPeerConnection.createOffer();
         await localPeerConnection.setLocalDescription(offer);
         logSender(`📡 Creating WebRTC offer...`);
-        return true;
     }
     
-    function setupDataChannelForSender(channel) {
-        channel.onopen = () => {
-            logSender('🔗 Data channel open! Receiver is connected.');
-            senderStatusDiv.innerText = '✅ Receiver connected! You can now send the file.';
-            sendFileBtn.disabled = !selectedFile;
-            sendFileBtn.innerText = '📡 Send File Now';
-        };
-        channel.onclose = () => {
-            logSender('⚠️ Data channel closed');
-            senderStatusDiv.innerText = 'Connection closed. Generate new code if needed.';
-            sendFileBtn.disabled = true;
-        };
-        channel.onerror = (err) => logSender(`DataChannel error: ${err.message}`);
-    }
-    
-    // ---- SENDER: send file via datachannel ----
     function sendFileViaChannel(file) {
         if (!dataChannel || dataChannel.readyState !== 'open') {
-            logSender('❌ No active connection. Wait for receiver to connect.');
+            logSender('❌ No connection. Wait for receiver.');
             return;
         }
         const CHUNK_SIZE = 16384;
         let offset = 0;
-        const metadata = { name: file.name, type: file.type, size: file.size };
-        dataChannel.send(JSON.stringify({ type: 'metadata', data: metadata }));
-        
+        dataChannel.send(JSON.stringify({ type: 'metadata', data: { name: file.name, type: file.type, size: file.size } }));
         const reader = new FileReader();
         function sendNext() {
             const slice = file.slice(offset, offset + CHUNK_SIZE);
             reader.onload = (e) => {
                 dataChannel.send(e.target.result);
                 offset += e.target.result.byteLength;
-                const percent = ((offset / file.size) * 100).toFixed(1);
-                logSender(`📤 Sending... ${percent}%`);
+                logSender(`📤 Sending... ${((offset / file.size) * 100).toFixed(1)}%`);
                 if (offset < file.size) sendNext();
-                else {
-                    dataChannel.send(JSON.stringify({ type: 'complete' }));
-                    logSender(`✅ File transfer complete!`);
-                    senderStatusDiv.innerText = 'File sent! Receiver can download.';
-                    sendFileBtn.disabled = true;
-                }
+                else { dataChannel.send(JSON.stringify({ type: 'complete' })); logSender(`✅ File sent!`); sendFileBtn.disabled = true; }
             };
             reader.readAsArrayBuffer(slice);
         }
         sendNext();
     }
     
-    // ---- RECEIVER: fetch offer from Firebase by code, then create answer ----
-    async function fetchAndConnectToOffer(shortCode) {
-        resetReceiverUI();
-        if (!db) throw new Error("Firebase not ready");
-        receiverStatusDiv.innerText = `🔍 Fetching offer for code ${shortCode}...`;
-        logReceiver(`Looking up code: ${shortCode}`);
-        
+    async function fetchAndConnect(shortCode) {
+        if (localPeerConnection) localPeerConnection.close();
         const docRef = doc(db, "webrtcOffers", shortCode);
         const docSnap = await getDoc(docRef);
         if (!docSnap.exists()) {
-            receiverStatusDiv.innerText = `❌ Code "${shortCode}" not found. Ensure sender generated it.`;
+            receiverStatusDiv.innerText = `❌ Code "${shortCode}" not found.`;
             logReceiver(`No offer found for code: ${shortCode}`);
             return false;
         }
-        const data = docSnap.data();
-        if (!data.offer || !data.offer.sdp) {
-            receiverStatusDiv.innerText = `Invalid offer data.`;
-            return false;
-        }
-        const offerDesc = new RTCSessionDescription({ type: data.offer.type, sdp: data.offer.sdp });
-        
+        const offerData = docSnap.data().offer;
         localPeerConnection = new RTCPeerConnection(configuration);
         localPeerConnection.ondatachannel = (event) => {
             dataChannel = event.channel;
-            setupDataChannelForReceiver(dataChannel);
+            let buffer = [], fileName = '', fileType = '';
+            dataChannel.onmessage = (e) => {
+                if (typeof e.data === 'string') {
+                    try {
+                        const json = JSON.parse(e.data);
+                        if (json.type === 'metadata') { fileName = json.data.name; fileType = json.data.type; buffer = []; receiverFileArea.style.display = 'block'; }
+                        else if (json.type === 'complete') {
+                            receivedFileBlob = new Blob(buffer, { type: fileType });
+                            receivedFileName = fileName;
+                            downloadReceivedBtn.disabled = false;
+                            receiverStatusDiv.innerText = `✅ File ready! Click Download.`;
+                            // Clean up: delete the offer from database after successful transfer
+                            deleteDoc(docRef).catch(console.warn);
+                        }
+                    } catch(e) {}
+                } else if (e.data instanceof ArrayBuffer) { buffer.push(e.data); }
+            };
+            receiverStatusDiv.innerText = `✅ Connected! Waiting for file...`;
         };
-        
-        await localPeerConnection.setRemoteDescription(offerDesc);
+        await localPeerConnection.setRemoteDescription(offerData);
         const answer = await localPeerConnection.createAnswer();
         await localPeerConnection.setLocalDescription(answer);
-        
-        receiverStatusDiv.innerText = `✅ Connected via code ${shortCode}. Waiting for file...`;
-        logReceiver(`WebRTC connection established, awaiting file transfer.`);
-        
-        // Optional: delete offer from Firebase after successful connection (auto-clean)
-        // We don't delete immediately to allow reconnects, but delete after download or timeout.
-        // We'll flag as used after file transfer.
+        logReceiver(`Connected via code ${shortCode}`);
         return true;
     }
     
-    function setupDataChannelForReceiver(channel) {
-        let receivingBuffer = [];
-        let fileName = '', fileType = '', expectedSize = 0;
-        let metadataReady = false;
-        
-        channel.onopen = () => {
-            logReceiver('Data channel open, ready for file.');
-            receiverStatusDiv.innerText = 'Connected! Sender will now send file.';
-        };
-        channel.onmessage = (event) => {
-            const data = event.data;
-            if (typeof data === 'string') {
-                try {
-                    const json = JSON.parse(data);
-                    if (json.type === 'metadata') {
-                        fileName = json.data.name;
-                        fileType = json.data.type;
-                        expectedSize = json.data.size;
-                        receivingBuffer = [];
-                        metadataReady = true;
-                        receiverFileArea.style.display = 'block';
-                        logReceiver(`📄 Receiving: ${fileName} (${formatBytes(expectedSize)})`);
-                        receiverStatusDiv.innerText = `Receiving ${fileName}...`;
-                    } else if (json.type === 'complete') {
-                        const fullBlob = new Blob(receivingBuffer, { type: fileType || 'application/octet-stream' });
-                        receivedFileBlob = fullBlob;
-                        receivedFileName = fileName;
-                        downloadReceivedBtn.disabled = false;
-                        receiverStatusDiv.innerText = `✅ File received! Click Download.`;
-                        logReceiver(`🎉 File ready: ${fileName}`);
-                        // Clean up firestore offer after successful transfer
-                        if (currentShortCode && db) {
-                            deleteDoc(doc(db, "webrtcOffers", currentShortCode)).catch(e=>console.warn);
-                        }
-                    }
-                } catch(e) { logReceiver(`String message: ${data}`); }
-            } else if (data instanceof ArrayBuffer) {
-                if (metadataReady) {
-                    receivingBuffer.push(data);
-                    const receivedBytes = receivingBuffer.reduce((acc, chunk) => acc + chunk.byteLength, 0);
-                    if (expectedSize) {
-                        const percent = ((receivedBytes / expectedSize) * 100).toFixed(1);
-                        receiverStatusDiv.innerText = `📥 Downloading... ${percent}%`;
-                    }
-                } else {
-                    logReceiver(`⚠️ Received binary without metadata`);
-                }
-            }
-        };
-        channel.onclose = () => logReceiver('Data channel closed');
-    }
+    function selectFile(file) { selectedFile = file; fileInfoDiv.innerHTML = `📄 ${file.name} (${(file.size/1024).toFixed(1)} KB)`; logSender(`Selected: ${file.name}`); }
+    fileInput.onchange = (e) => { if (e.target.files[0]) selectFile(e.target.files[0]); };
+    senderDropzone.onclick = () => fileInput.click();
+    senderDropzone.ondragover = (e) => e.preventDefault();
+    senderDropzone.ondrop = (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]); };
     
-    // ---- File selection & UI ----
-    function selectFile(file) {
-        selectedFile = file;
-        fileInfoDiv.innerHTML = `📄 ${file.name} (${formatBytes(file.size)})`;
-        if (dataChannel && dataChannel.readyState === 'open') sendFileBtn.disabled = false;
-        else sendFileBtn.disabled = true;
-        logSender(`Selected: ${file.name}`);
-    }
-    
-    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) selectFile(e.target.files[0]); });
-    senderDropzone.addEventListener('click', () => fileInput.click());
-    senderDropzone.addEventListener('dragover', (e) => e.preventDefault());
-    senderDropzone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
-    });
-    
-    // ---- SENDER workflow: generate short code and store offer ----
-    createShortLinkBtn.addEventListener('click', async () => {
-        if (!selectedFile) {
-            alert('Please select a file first.');
-            return;
-        }
-        if (!db) {
-            alert('Firebase not configured. Please set your firebaseConfig in the code (apiKey, projectId, etc).');
-            return;
-        }
-        const shortCode = generateShortCode();
-        currentShortCode = shortCode;
-        generatedShortCodeSpan.innerText = shortCode;
-        shortCodeArea.style.display = 'block';
-        try {
-            await createAndStoreOffer(shortCode);
-            logSender(`Short code created: ${shortCode}. Share this code with receiver.`);
-            senderStatusDiv.innerText = `📢 Code: ${shortCode} - waiting for receiver...`;
-        } catch (err) {
-            logSender(`Error creating offer: ${err.message}`);
-            senderStatusDiv.innerText = 'Error creating connection.';
-        }
-    });
-    
-    copyCodeBtn.addEventListener('click', () => {
-        if (currentShortCode) {
-            navigator.clipboard.writeText(currentShortCode);
-            logSender('Code copied to clipboard');
-        }
-    });
-    
-    refreshCodeBtn.addEventListener('click', async () => {
+    createShortLinkBtn.onclick = async () => {
         if (!selectedFile) { alert('Select a file first'); return; }
-        const newCode = generateShortCode();
-        currentShortCode = newCode;
-        generatedShortCodeSpan.innerText = newCode;
-        await createAndStoreOffer(newCode);
-        logSender(`New code generated: ${newCode}`);
-    });
-    
-    sendFileBtn.addEventListener('click', () => {
-        if (selectedFile && dataChannel && dataChannel.readyState === 'open') {
-            sendFileViaChannel(selectedFile);
-        } else {
-            logSender('Not connected. Wait for receiver to join using the code.');
-        }
-    });
-    
-    // ---- RECEIVER: connect using code ----
-    fetchAndConnectBtn.addEventListener('click', async () => {
-        const code = receiverCodeInput.value.trim().toUpperCase();
-        if (!code) { alert('Enter the 6-character code from sender'); return; }
-        if (!db) { alert('Firebase not ready. Check config.'); return; }
+        const code = generateShortCode();
         currentShortCode = code;
-        const success = await fetchAndConnectToOffer(code);
-        if (!success) {
-            receiverStatusDiv.innerText = `Code "${code}" not active. Ask sender to generate new code.`;
-        } else {
-            receiverStatusDiv.innerText = `Connected! Waiting for sender to send file.`;
-        }
-    });
-    
-    downloadReceivedBtn.addEventListener('click', () => {
-        if (receivedFileBlob && receivedFileName) {
-            const url = URL.createObjectURL(receivedFileBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = receivedFileName;
-            a.click();
-            URL.revokeObjectURL(url);
-            logReceiver(`Downloaded: ${receivedFileName}`);
-            downloadReceivedBtn.disabled = true;
-            receiverStatusDiv.innerText = 'File downloaded. You can close the tab.';
-            receivedFileBlob = null;
-        } else {
-            logReceiver('No file available');
-        }
-    });
-    
-    function formatBytes(bytes) {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-    }
-    
-    // Role switching
-    senderRoleBtn.onclick = () => {
-        isSenderMode = true;
-        senderRoleBtn.classList.add('active');
-        receiverRoleBtn.classList.remove('active');
-        senderPanel.classList.add('active-panel');
-        receiverPanel.classList.remove('active-panel');
-        resetSenderConnection();
-        if (localPeerConnection) localPeerConnection.close();
-        dataChannel = null;
-        shortCodeArea.style.display = 'none';
-        selectedFile = null;
-        fileInfoDiv.innerHTML = '';
-        logSender('Sender mode ready');
+        generatedShortCodeSpan.innerText = code;
+        shortCodeArea.style.display = 'block';
+        await createAndStoreOffer(code);
+        logSender(`Short code: ${code}`);
     };
-    receiverRoleBtn.onclick = () => {
-        isSenderMode = false;
-        receiverRoleBtn.classList.add('active');
-        senderRoleBtn.classList.remove('active');
-        receiverPanel.classList.add('active-panel');
-        senderPanel.classList.remove('active-panel');
-        resetReceiverUI();
-        receiverCodeInput.value = '';
-        logReceiver('Receiver mode – enter short code');
-    };
+    copyCodeBtn.onclick = () => { if (currentShortCode) { navigator.clipboard.writeText(currentShortCode); logSender('Code copied'); } };
+    refreshCodeBtn.onclick = async () => { if (!selectedFile) { alert('Select a file'); return; } const code = generateShortCode(); currentShortCode = code; generatedShortCodeSpan.innerText = code; await createAndStoreOffer(code); };
+    sendFileBtn.onclick = () => { if (selectedFile && dataChannel?.readyState === 'open') sendFileViaChannel(selectedFile); else logSender('Not connected'); };
+    fetchAndConnectBtn.onclick = async () => { const code = receiverCodeInput.value.trim().toUpperCase(); if (!code) { alert('Enter code'); return; } await fetchAndConnect(code); };
+    downloadReceivedBtn.onclick = () => { if (receivedFileBlob && receivedFileName) { const url = URL.createObjectURL(receivedFileBlob); const a = document.createElement('a'); a.href = url; a.download = receivedFileName; a.click(); URL.revokeObjectURL(url); logReceiver(`Downloaded: ${receivedFileName}`); downloadReceivedBtn.disabled = true; } };
     
-    // default start: sender mode
+    senderRoleBtn.onclick = () => { isSenderMode = true; senderRoleBtn.classList.add('active'); receiverRoleBtn.classList.remove('active'); senderPanel.classList.add('active-panel'); receiverPanel.classList.remove('active-panel'); shortCodeArea.style.display = 'none'; };
+    receiverRoleBtn.onclick = () => { isSenderMode = false; receiverRoleBtn.classList.add('active'); senderRoleBtn.classList.remove('active'); receiverPanel.classList.add('active-panel'); senderPanel.classList.remove('active-panel'); receiverCodeInput.value = ''; };
     senderRoleBtn.click();
-    
-    // Optional: if Firebase config is invalid, show warning but keep UI functional
-    if (!db || firebaseConfig.apiKey === "YOUR_API_KEY") {
-        const warnMsg = "⚠️ Firebase not configured. Replace firebaseConfig object with your own Firebase project credentials (see code comments).";
-        console.warn(warnMsg);
-        senderLogDiv.innerText += `\n⚠️ ${warnMsg}`;
-        receiverLogDiv.innerText += `\n⚠️ ${warnMsg}`;
-        createShortLinkBtn.disabled = true;
-        fetchAndConnectBtn.disabled = true;
-    }
 </script>
 </body>
 </html>
