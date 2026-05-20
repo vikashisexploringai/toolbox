@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AirShare · Firestore Only (No Storage)</title>
+    <title>AirShare · Large Files (Chunked Firestore)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -39,8 +39,8 @@
 <body>
 <div class="container">
     <div class="header">
-        <h1>⚡ AirShare · Firestore Only</h1>
-        <div class="badge">✅ No Storage needed · Works with your Firestore database</div>
+        <h1>⚡ AirShare · Large Files (Chunked)</h1>
+        <div class="badge">✅ Handles files up to 50MB using Firestore chunks</div>
     </div>
 
     <div class="role-selector">
@@ -50,9 +50,9 @@
 
     <div id="senderPanel" class="panel">
         <h2>📤 Upload & Share a file</h2>
-        <div class="warning">📝 Files are stored in Firestore. Max size ~1MB per file.</div>
+        <div class="warning">📝 Files are split into 900KB chunks and stored in Firestore. Max 50MB total.</div>
         <div class="file-dropzone" id="senderDropzone">
-            📂 Click to select file
+            📂 Click to select file (up to 50MB)
             <input type="file" id="fileInput" style="display: none;">
         </div>
         <div id="fileInfo" style="margin: 0.5rem 0; font-size: 0.85rem;"></div>
@@ -72,7 +72,7 @@
             </div>
         </div>
         
-        <div class="status-box" id="senderStatus">⚡ Select a file to share</div>
+        <div class="status-box" id="senderStatus">⚡ Select a file (up to 50MB)</div>
         <div class="log" id="senderLog">📭 Ready.\n</div>
     </div>
 
@@ -81,6 +81,9 @@
         <div class="flex-input">
             <input type="text" id="codeInput" placeholder="Enter 6-char code" maxlength="8" style="text-transform: uppercase;">
             <button id="downloadBtn">🔍 Fetch & Download</button>
+        </div>
+        <div class="progress-bar" id="downloadProgressBar" style="display: none;">
+            <div class="progress-fill" id="downloadProgressFill"></div>
         </div>
         <div class="status-box" id="receiverStatus">⏳ Enter code to download</div>
         <div id="downloadArea" style="display: none;">
@@ -95,7 +98,7 @@
         apiKey: "AIzaSyBhujqx9CZwK_NUrQgcUEX5wxKS0hYjXKc",
         authDomain: "vikash-classes-c98f8.firebaseapp.com",
         projectId: "vikash-classes-c98f8",
-        storageBucket: "",  // Empty - we're NOT using Storage
+        storageBucket: "",
         messagingSenderId: "456891384843",
         appId: "1:456891384843:web:cf845b07c2884a4c64b30e"
     };
@@ -108,12 +111,13 @@
     const auth = getAuth(app);
     const db = getFirestore(app, 'shortener');
     
+    const CHUNK_SIZE = 900 * 1024; // 900KB chunks (leaves room for Base64 overhead)
+    
     let authReady = false;
     let selectedFile = null;
     let currentCode = null;
     let currentFileData = null;
     
-    // DOM elements
     const senderPanel = document.getElementById('senderPanel');
     const receiverPanel = document.getElementById('receiverPanel');
     const senderBtn = document.getElementById('senderRoleBtn');
@@ -135,6 +139,8 @@
     const dropzone = document.getElementById('senderDropzone');
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
+    const downloadProgressBar = document.getElementById('downloadProgressBar');
+    const downloadProgressFill = document.getElementById('downloadProgressFill');
     
     function logSender(msg) { senderLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; senderLog.scrollTop = senderLog.scrollHeight; }
     function logReceiver(msg) { receiverLog.innerText += `\n${new Date().toLocaleTimeString()} > ${msg}`; receiverLog.scrollTop = receiverLog.scrollHeight; }
@@ -146,85 +152,100 @@
         return code;
     }
     
-    // Initialize anonymous auth
     async function initAuth() {
         senderStatus.innerText = '🔐 Authenticating...';
         receiverStatus.innerText = '🔐 Authenticating...';
-        
         try {
             await signInAnonymously(auth);
             authReady = true;
-            senderStatus.innerText = '✅ Ready! Select a file to share.';
+            senderStatus.innerText = '✅ Ready! Select a file (up to 50MB).';
             receiverStatus.innerText = '✅ Ready! Enter code to download.';
             logSender('✅ Authentication successful');
             logReceiver('✅ Authentication successful');
             if (selectedFile) uploadBtn.disabled = false;
         } catch (error) {
-            console.error('Auth error:', error);
-            senderStatus.innerText = '❌ Auth failed. Check Firebase settings.';
-            receiverStatus.innerText = '❌ Auth failed. Check Firebase settings.';
             logSender(`Auth error: ${error.message}`);
             logReceiver(`Auth error: ${error.message}`);
         }
     }
     
-    async function storeFileInFirestore(file, code) {
+    async function storeFileInChunks(file, code) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = async (e) => {
-                const base64Data = e.target.result;
+                const base64Data = e.target.result.split(',')[1]; // Remove data:xxx;base64,
+                const totalChunks = Math.ceil(base64Data.length / CHUNK_SIZE);
                 
-                progressBar.style.display = 'block';
-                progressFill.style.width = '30%';
-                senderStatus.innerText = 'Storing in Firestore...';
+                logSender(`Splitting into ${totalChunks} chunks...`);
+                senderStatus.innerText = `Splitting into ${totalChunks} chunks...`;
                 
-                try {
-                    await setDoc(doc(db, 'fileShares', code), {
-                        fileName: file.name,
-                        fileType: file.type,
-                        fileSize: file.size,
-                        fileData: base64Data,
-                        createdAt: Date.now(),
-                        expiresAt: Date.now() + 1800000 // 30 minutes
+                // Store metadata
+                await setDoc(doc(db, 'fileMetadata', code), {
+                    fileName: file.name,
+                    fileType: file.type,
+                    fileSize: file.size,
+                    totalChunks: totalChunks,
+                    createdAt: Date.now(),
+                    expiresAt: Date.now() + 1800000
+                });
+                
+                // Store each chunk
+                for (let i = 0; i < totalChunks; i++) {
+                    const chunk = base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                    await setDoc(doc(db, 'fileChunks', `${code}_chunk_${i}`), {
+                        code: code,
+                        chunkIndex: i,
+                        data: chunk,
+                        timestamp: Date.now()
                     });
                     
-                    progressFill.style.width = '100%';
-                    setTimeout(() => {
-                        progressBar.style.display = 'none';
-                        progressFill.style.width = '0%';
-                    }, 500);
-                    
-                    resolve();
-                } catch (error) {
-                    reject(error);
+                    const percent = ((i + 1) / totalChunks) * 100;
+                    progressFill.style.width = `${percent}%`;
+                    senderStatus.innerText = `Storing chunk ${i + 1}/${totalChunks} (${Math.round(percent)}%)`;
+                    logSender(`Chunk ${i + 1}/${totalChunks} stored`);
                 }
+                
+                resolve(totalChunks);
             };
             reader.onerror = reject;
             reader.readAsDataURL(file);
         });
     }
     
-    async function retrieveFileFromFirestore(code) {
-        const docRef = doc(db, 'fileShares', code);
-        const docSnap = await getDoc(docRef);
+    async function retrieveFileFromChunks(code) {
+        const metadataDoc = await getDoc(doc(db, 'fileMetadata', code));
+        if (!metadataDoc.exists()) return null;
         
-        if (!docSnap.exists()) {
+        const metadata = metadataDoc.data();
+        if (metadata.expiresAt < Date.now()) {
+            await deleteDoc(doc(db, 'fileMetadata', code));
             return null;
         }
         
-        const data = docSnap.data();
-        
-        // Check expiry
-        if (data.expiresAt < Date.now()) {
-            await deleteDoc(docRef);
-            return null;
+        let allData = '';
+        for (let i = 0; i < metadata.totalChunks; i++) {
+            const chunkDoc = await getDoc(doc(db, 'fileChunks', `${code}_chunk_${i}`));
+            if (!chunkDoc.exists()) return null;
+            allData += chunkDoc.data().data;
+            
+            const percent = ((i + 1) / metadata.totalChunks) * 100;
+            if (downloadProgressFill) downloadProgressFill.style.width = `${percent}%`;
+            receiverStatus.innerText = `Fetching ${i + 1}/${metadata.totalChunks} chunks (${Math.round(percent)}%)`;
         }
         
-        return data;
+        return {
+            fileName: metadata.fileName,
+            fileType: metadata.fileType,
+            fileSize: metadata.fileSize,
+            fileData: `data:${metadata.fileType};base64,${allData}`
+        };
     }
     
-    async function deleteFileFromFirestore(code) {
-        await deleteDoc(doc(db, 'fileShares', code)).catch(() => {});
+    async function cleanupChunks(code, totalChunks) {
+        await deleteDoc(doc(db, 'fileMetadata', code)).catch(() => {});
+        for (let i = 0; i < totalChunks; i++) {
+            await deleteDoc(doc(db, 'fileChunks', `${code}_chunk_${i}`)).catch(() => {});
+        }
     }
     
     uploadBtn.onclick = async () => {
@@ -233,8 +254,8 @@
             return;
         }
         
-        if (selectedFile.size > 1048576) {
-            alert('File too large! Please select a file smaller than 1MB.');
+        if (selectedFile.size > 50 * 1024 * 1024) {
+            alert('File too large! Maximum 50MB.');
             return;
         }
         
@@ -242,13 +263,14 @@
         currentCode = code;
         displayCode.innerText = code;
         codeArea.style.display = 'block';
+        progressBar.style.display = 'block';
         
         uploadBtn.disabled = true;
         uploadBtn.innerText = 'Storing...';
         
         try {
-            await storeFileInFirestore(selectedFile, code);
-            logSender(`✅ File stored! Share code: ${code}`);
+            const totalChunks = await storeFileInChunks(selectedFile, code);
+            logSender(`✅ File stored! ${totalChunks} chunks. Share code: ${code}`);
             senderStatus.innerText = `✅ Ready! Code: ${code}`;
             uploadBtn.innerText = 'Stored ✓';
         } catch (error) {
@@ -276,12 +298,14 @@
         
         downloadBtn.disabled = true;
         downloadBtn.innerText = 'Fetching...';
+        downloadProgressBar.style.display = 'block';
         receiverStatus.innerText = `Looking for code ${code}...`;
         logReceiver(`Fetching code: ${code}`);
         
-        const fileData = await retrieveFileFromFirestore(code);
+        const fileData = await retrieveFileFromChunks(code);
         
         if (!fileData) {
+            downloadProgressBar.style.display = 'none';
             receiverStatus.innerText = `❌ Code "${code}" not found or expired`;
             logReceiver(`Code not found: ${code}`);
             downloadBtn.disabled = false;
@@ -289,7 +313,7 @@
             return;
         }
         
-        receiverStatus.innerText = `✅ Found: ${fileData.fileName} (${(fileData.fileSize/1024).toFixed(1)} KB)`;
+        receiverStatus.innerText = `✅ Found: ${fileData.fileName} (${(fileData.fileSize/1024/1024).toFixed(2)} MB)`;
         logReceiver(`Found: ${fileData.fileName}`);
         
         currentFileData = fileData;
@@ -299,12 +323,12 @@
         downloadBtn.disabled = false;
         downloadBtn.innerText = '🔍 Fetch & Download';
         codeInput.value = '';
+        downloadProgressBar.style.display = 'none';
     };
     
-    saveBtn.onclick = () => {
+    saveBtn.onclick = async () => {
         if (!currentFileData) return;
         
-        // Convert base64 to blob
         const byteString = atob(currentFileData.fileData.split(',')[1]);
         const ab = new ArrayBuffer(byteString.length);
         const ia = new Uint8Array(ab);
@@ -324,38 +348,35 @@
         receiverStatus.innerText = 'Download complete!';
         downloadArea.style.display = 'none';
         
-        // Delete the file from Firestore after download
+        // Cleanup
         const code = codeInput.value.trim().toUpperCase();
-        if (code) deleteFileFromFirestore(code);
+        const totalChunks = Math.ceil(currentFileData.fileData.length / CHUNK_SIZE);
+        if (code) await cleanupChunks(code, totalChunks);
         currentFileData = null;
     };
     
-    // File selection
     fileInput.onchange = (e) => {
         if (e.target.files[0]) {
             selectedFile = e.target.files[0];
-            const sizeKB = (selectedFile.size / 1024).toFixed(1);
-            const sizeMB = (selectedFile.size / 1048576).toFixed(2);
+            const sizeMB = (selectedFile.size / 1024 / 1024).toFixed(2);
             
-            if (selectedFile.size > 1048576) {
-                fileInfo.innerHTML = `⚠️ ${selectedFile.name} (${sizeKB} KB) - TOO LARGE (max 1MB)`;
+            if (selectedFile.size > 50 * 1024 * 1024) {
+                fileInfo.innerHTML = `⚠️ ${selectedFile.name} (${sizeMB} MB) - TOO LARGE (max 50MB)`;
                 fileInfo.style.color = '#e74c3c';
                 uploadBtn.disabled = true;
-                senderStatus.innerText = '❌ File too large! Max 1MB.';
+                senderStatus.innerText = '❌ File too large! Max 50MB.';
             } else {
-                fileInfo.innerHTML = `📄 ${selectedFile.name} (${sizeKB} KB)`;
+                fileInfo.innerHTML = `📄 ${selectedFile.name} (${sizeMB} MB)`;
                 fileInfo.style.color = '#e0f2f0';
                 uploadBtn.disabled = !authReady;
                 senderStatus.innerText = authReady ? 'Ready to store' : 'Waiting for auth...';
             }
-            
-            logSender(`Selected: ${selectedFile.name} (${sizeKB} KB)`);
+            logSender(`Selected: ${selectedFile.name} (${sizeMB} MB)`);
         }
     };
     
     dropzone.onclick = () => fileInput.click();
     
-    // Role switching
     senderBtn.onclick = () => {
         senderBtn.classList.add('active');
         receiverBtn.classList.remove('active');
@@ -373,9 +394,9 @@
         senderPanel.classList.remove('active-panel');
         codeInput.value = '';
         downloadArea.style.display = 'none';
+        downloadProgressBar.style.display = 'none';
     };
     
-    // Start
     senderBtn.click();
     initAuth();
 </script>
