@@ -16,7 +16,7 @@ let elements = {};
 /**
  * Get the HTML for the merger tool
  */
-export function getMergerHTML() {
+export function getToolHTML() {
     return `
         <div id="mergerTool">
             <div id="dropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1.5rem;box-shadow:0 1px 2px rgba(0,0,0,0.02);">
@@ -58,7 +58,7 @@ export function getMergerHTML() {
 /**
  * Initialize the PDF Merger tool
  */
-export function initMerger() {
+export function initTool() {
     // Get all DOM elements after they're rendered
     elements = {
         dropZone: document.getElementById('dropZone'),
