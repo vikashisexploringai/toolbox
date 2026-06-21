@@ -1,11 +1,11 @@
 /**
  * ========================================
  * Main App - PDF Toolbox
- * Loads tools dynamically from /tools/ folder
+ * Loads tools using fetch + blob URL
  * ========================================
  */
 
-import { openModal, closeModal, setModalFooter, resetModal } from './modal.js';
+import { openModal, closeModal, setModalFooter } from './modal.js';
 
 // ===== Tool Configuration =====
 const TOOLS = [
@@ -15,7 +15,7 @@ const TOOLS = [
         name: 'PDF Merger',
         description: 'Merge multiple PDFs with drag & drop, reverse order, and individual arrangement.',
         tag: 'Popular',
-        scriptPath: './tools/pdf-merger/merger.js'
+        scriptPath: 'tools/pdf-merger/merger.js'
     },
     {
         id: 'pdf-split',
@@ -23,7 +23,7 @@ const TOOLS = [
         name: 'PDF Splitter',
         description: 'Split a PDF into multiple files by page ranges. Extract specific pages.',
         tag: 'New',
-        scriptPath: './tools/pdf-split/splitter.js'
+        scriptPath: 'tools/pdf-split/splitter.js'
     },
     {
         id: 'pdf-compress',
@@ -31,7 +31,7 @@ const TOOLS = [
         name: 'PDF Compressor',
         description: 'Reduce PDF file size with quality presets. Perfect for email attachments.',
         tag: 'Beta',
-        scriptPath: './tools/pdf-compress/compressor.js'
+        scriptPath: 'tools/pdf-compress/compressor.js'
     },
     {
         id: 'html-saver',
@@ -39,7 +39,7 @@ const TOOLS = [
         name: 'HTML Saver',
         description: 'Paste HTML code, preview it live, and download as a complete .html file.',
         tag: 'Stable',
-        scriptPath: './tools/html-saver/saver.js'
+        scriptPath: 'tools/html-saver/saver.js'
     }
 ];
 
@@ -63,16 +63,41 @@ function renderTools() {
         </div>
     `).join('');
     
-    // Attach click events
     grid.querySelectorAll('.open-btn, .tool-card').forEach(el => {
         el.addEventListener('click', (e) => {
             const toolId = e.target.closest('.open-btn')?.dataset.tool || 
                           e.target.closest('.tool-card')?.dataset.tool;
-            if (toolId) {
-                openTool(toolId);
-            }
+            if (toolId) openTool(toolId);
         });
     });
+}
+
+// ===== Load Tool Using Fetch + Blob URL =====
+async function loadTool(tool) {
+    try {
+        // Fetch the tool file as text
+        const response = await fetch(tool.scriptPath);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const code = await response.text();
+        
+        // Create a blob URL from the code
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // Import from the blob URL
+        const module = await import(blobUrl);
+        
+        // Clean up the blob URL
+        URL.revokeObjectURL(blobUrl);
+        
+        return module;
+    } catch (err) {
+        console.error(`Failed to load tool "${tool.id}":`, err);
+        throw err;
+    }
 }
 
 // ===== Open Tool =====
@@ -81,26 +106,20 @@ async function openTool(toolId) {
     if (!tool) return;
     
     try {
-        // Load tool module (from cache or dynamically)
         let module = toolCache[toolId];
         if (!module) {
-            const moduleUrl = tool.scriptPath;
-            module = await import(moduleUrl);
+            module = await loadTool(tool);
             toolCache[toolId] = module;
         }
         
-        // Get HTML content from tool
         const contentHTML = module.getToolHTML ? module.getToolHTML() : '<p>Tool content not available</p>';
         
-        // Open modal with content
         openModal(tool.name, tool.icon, contentHTML, () => {
-            // Initialize tool after modal opens
             if (typeof module.initTool === 'function') {
-                module.initTool();
+                setTimeout(() => module.initTool(), 50);
             }
         });
         
-        // Set footer
         setModalFooter([
             {
                 text: '✕ Close',
@@ -110,18 +129,16 @@ async function openTool(toolId) {
         ]);
         
     } catch (err) {
-        console.error(`Failed to load tool "${toolId}":`, err);
+        console.error(`Failed to open tool "${toolId}":`, err);
         openModal('Error', '❌', `
             <div style="padding:2rem;text-align:center;color:#991B1B;">
                 <p style="font-size:1.2rem;font-weight:600;">Failed to load tool</p>
                 <p style="color:#64748B;">${err.message}</p>
-                <p style="font-size:0.85rem;margin-top:1rem;">Please check the console for details.</p>
+                <p style="font-size:0.85rem;margin-top:1rem;">Check console for details.</p>
             </div>
         `);
     }
 }
 
-// ===== Initialize App =====
-document.addEventListener('DOMContentLoaded', () => {
-    renderTools();
-});
+// ===== Initialize =====
+document.addEventListener('DOMContentLoaded', renderTools);
