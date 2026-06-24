@@ -19,11 +19,14 @@ let elements = {};
 export function getToolHTML() {
     return `
         <div id="mergerTool">
-            <div id="dropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1.5rem;box-shadow:0 1px 2px rgba(0,0,0,0.02);">
-                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop PDFs anywhere</strong><br>
-                <span style="font-size:0.85rem;color:#64748B;">or click to select multiple files</span>
-                <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
-            </div>
+            <div id="dropZone" style="...">
+    <strong>📂 Drop PDFs anywhere</strong><br>
+    <span style="font-size:0.85rem;color:#64748B;">or</span>
+    <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+        📁 Browse Files
+    </button>
+    <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
+</div>
             
             <div style="display:flex;gap:0.85rem;flex-wrap:wrap;margin:0.75rem 0 1rem 0;align-items:center;justify-content:space-between;">
                 <div style="display:flex;gap:0.7rem;flex-wrap:wrap;">
