@@ -113,7 +113,8 @@ export function initTool() {
             // Add selected class to clicked
             btn.style.borderColor = '#4F46E5';
             btn.style.background = '#EEF2FF';
-            selectedRotation = parseInt(btn.dataset.degrees);
+            // ✅ Ensure we store as number
+            selectedRotation = parseInt(btn.dataset.degrees, 10);
             // Display the user-friendly angle
             const displayAngle = selectedRotation === 270 ? '-90' : selectedRotation;
             elements.rotationDisplay.textContent = displayAngle + '°';
@@ -252,11 +253,25 @@ async function handleFile(file) {
 }
 
 /**
- * Perform rotation
+ * Perform rotation - FIXED VERSION
  */
 async function performRotation(degrees) {
     if (!currentFile) {
         setStatus('Please upload a PDF first', 'error');
+        return;
+    }
+    
+    // ✅ Ensure degrees is a number
+    let rotationAngle = Number(degrees);
+    if (isNaN(rotationAngle)) {
+        setStatus('❌ Invalid rotation angle', 'error');
+        return;
+    }
+    
+    // ✅ Valid values for pdf-lib: 0, 90, 180, 270
+    const validAngles = [0, 90, 180, 270];
+    if (!validAngles.includes(rotationAngle)) {
+        setStatus(`❌ Invalid rotation angle: ${rotationAngle}. Must be 0, 90, 180, or 270.`, 'error');
         return;
     }
     
@@ -276,19 +291,10 @@ async function performRotation(degrees) {
         const newPdf = await PDFDocument.create();
         const pageIndices = sourcePdf.getPageIndices();
         
-        // ✅ FIX: Ensure rotation angle is valid for pdf-lib
-        // Valid values: 0, 90, 180, 270
-        let rotationAngle = degrees;
-        // If angle is not valid, default to 0
-        if (![0, 90, 180, 270].includes(rotationAngle)) {
-            console.warn(`Invalid rotation angle: ${rotationAngle}, defaulting to 0`);
-            rotationAngle = 0;
-        }
-        
         // Copy pages with rotation
         for (const pageIndex of pageIndices) {
             const [copiedPage] = await newPdf.copyPages(sourcePdf, [pageIndex]);
-            // Apply rotation
+            // ✅ Apply rotation as number
             copiedPage.setRotation(rotationAngle);
             newPdf.addPage(copiedPage);
         }
@@ -296,7 +302,7 @@ async function performRotation(degrees) {
         const bytes = await newPdf.save();
         const blob = new Blob([bytes], { type: 'application/pdf' });
         // Display user-friendly angle
-        const displayAngle = degrees === 270 ? '-90' : degrees;
+        const displayAngle = rotationAngle === 270 ? '-90' : rotationAngle;
         const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
         downloadBlob(blob, fileName);
         
