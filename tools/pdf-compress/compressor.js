@@ -21,11 +21,14 @@ export function getToolHTML() {
                 📦 Reduce PDF file size
             </div>
             
-            <div id="compressDropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1rem;">
-                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop a PDF here</strong><br>
-                <span style="font-size:0.85rem;color:#64748B;">or click to select a file</span>
-                <input type="file" id="compressFileInput" accept=".pdf" style="display:none;">
-            </div>
+           <div id="dropZone" style="...">
+    <strong>📂 Drop PDFs anywhere</strong><br>
+    <span style="font-size:0.85rem;color:#64748B;">or</span>
+    <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+        📁 Browse Files
+    </button>
+    <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
+</div>
             
             <div id="compressFileInfo" style="display:none;margin-top:0.5rem;padding:0.75rem 1rem;background:#F1F5F9;border-radius:12px;">
                 <span id="compressFileName" style="font-weight:600;">file.pdf</span> — 
