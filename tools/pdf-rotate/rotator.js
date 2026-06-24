@@ -42,7 +42,7 @@ export function getToolHTML() {
                     <button class="rotation-option" data-degrees="90" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
                         ↻ 90° CW
                     </button>
-                    <button class="rotation-option" data-degrees="-90" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
+                    <button class="rotation-option" data-degrees="270" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
                         ↺ 90° CCW
                     </button>
                     <button class="rotation-option" data-degrees="180" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
@@ -114,12 +114,14 @@ export function initTool() {
             btn.style.borderColor = '#4F46E5';
             btn.style.background = '#EEF2FF';
             selectedRotation = parseInt(btn.dataset.degrees);
-            elements.rotationDisplay.textContent = selectedRotation + '°';
+            // Display the user-friendly angle
+            const displayAngle = selectedRotation === 270 ? '-90' : selectedRotation;
+            elements.rotationDisplay.textContent = displayAngle + '°';
             if (currentFile) {
                 elements.preview.style.display = 'block';
                 elements.applyBtn.disabled = false;
                 elements.resetBtn.disabled = false;
-                setStatus(`✅ Ready to rotate by ${selectedRotation}°`, 'info');
+                setStatus(`✅ Ready to rotate by ${displayAngle}°`, 'info');
             }
         });
     });
@@ -274,20 +276,31 @@ async function performRotation(degrees) {
         const newPdf = await PDFDocument.create();
         const pageIndices = sourcePdf.getPageIndices();
         
+        // ✅ FIX: Ensure rotation angle is valid for pdf-lib
+        // Valid values: 0, 90, 180, 270
+        let rotationAngle = degrees;
+        // If angle is not valid, default to 0
+        if (![0, 90, 180, 270].includes(rotationAngle)) {
+            console.warn(`Invalid rotation angle: ${rotationAngle}, defaulting to 0`);
+            rotationAngle = 0;
+        }
+        
         // Copy pages with rotation
         for (const pageIndex of pageIndices) {
             const [copiedPage] = await newPdf.copyPages(sourcePdf, [pageIndex]);
             // Apply rotation
-            copiedPage.setRotation(degrees);
+            copiedPage.setRotation(rotationAngle);
             newPdf.addPage(copiedPage);
         }
         
         const bytes = await newPdf.save();
         const blob = new Blob([bytes], { type: 'application/pdf' });
-        const fileName = currentFile.name.replace('.pdf', `_rotated_${degrees}deg.pdf`);
+        // Display user-friendly angle
+        const displayAngle = degrees === 270 ? '-90' : degrees;
+        const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
         downloadBlob(blob, fileName);
         
-        setStatus(`✅ Rotated ${totalPages} pages by ${degrees}° — download started`, 'success');
+        setStatus(`✅ Rotated ${totalPages} pages by ${displayAngle}° — download started`, 'success');
         
     } catch (err) {
         console.error('Rotation error:', err);
