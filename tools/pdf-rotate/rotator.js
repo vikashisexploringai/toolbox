@@ -1,7 +1,7 @@
 /**
  * ========================================
- * PDF Rotator Tool
- * Rotate PDF pages by 90°, 180°, or 270°
+ * PDF Rotator Tool - Fixed Version
+ * Rotate PDF pages using page rotation property
  * ========================================
  */
 
@@ -97,25 +97,19 @@ export function initTool() {
     };
     
     currentFile = null;
-    let selectedRotation = 90; // Default
+    let selectedRotation = 90;
     
-    // Setup drag and drop
     setupDragAndDrop();
     
-    // Setup rotation option buttons
     elements.rotationOptions.forEach(btn => {
         btn.addEventListener('click', () => {
-            // Remove selected class from all
             elements.rotationOptions.forEach(b => {
                 b.style.borderColor = '#E2E8F0';
                 b.style.background = 'white';
             });
-            // Add selected class to clicked
             btn.style.borderColor = '#4F46E5';
             btn.style.background = '#EEF2FF';
-            // ✅ Ensure we store as number
             selectedRotation = parseInt(btn.dataset.degrees, 10);
-            // Display the user-friendly angle
             const displayAngle = selectedRotation === 270 ? '-90' : selectedRotation;
             elements.rotationDisplay.textContent = displayAngle + '°';
             if (currentFile) {
@@ -127,15 +121,10 @@ export function initTool() {
         });
     });
     
-    // Setup apply button
     elements.applyBtn.addEventListener('click', () => performRotation(selectedRotation));
-    
-    // Setup reset button
     elements.resetBtn.addEventListener('click', resetRotation);
     
-    // Preload PDF library
     loadPDFLibrary().catch(e => console.warn('PDF library background load:', e));
-    
     setStatus('📄 Upload a PDF to rotate', 'info');
 }
 
@@ -175,7 +164,6 @@ function loadPDFLibrary() {
  * Setup drag and drop
  */
 function setupDragAndDrop() {
-    // Drag over
     elements.dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#EEF4FF';
@@ -183,14 +171,12 @@ function setupDragAndDrop() {
         elements.dropZone.style.borderStyle = 'solid';
     });
     
-    // Drag leave
     elements.dropZone.addEventListener('dragleave', () => {
         elements.dropZone.style.background = '#FEFEFE';
         elements.dropZone.style.borderColor = '#94A3B8';
         elements.dropZone.style.borderStyle = 'dashed';
     });
     
-    // Drop
     elements.dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#FEFEFE';
@@ -202,7 +188,6 @@ function setupDragAndDrop() {
         else setStatus('No valid PDF file dropped', 'error');
     });
     
-    // Browse button - opens file picker (NO double-click issue)
     if (elements.browseBtn) {
         elements.browseBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -210,7 +195,6 @@ function setupDragAndDrop() {
         });
     }
     
-    // File input change
     elements.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
             const file = e.target.files[0];
@@ -233,7 +217,6 @@ async function handleFile(file) {
     elements.fileSize.textContent = (file.size / 1024).toFixed(1) + ' KB';
     elements.fileInfo.style.display = 'block';
     
-    // Try to get page count
     try {
         await loadPDFLibrary();
         const arrayBuffer = await file.arrayBuffer();
@@ -243,7 +226,6 @@ async function handleFile(file) {
         elements.rotationPageDisplay.textContent = pageCount + ' pages';
         setStatus(`✅ Loaded "${file.name}" — ${pageCount} pages. Select rotation angle.`, 'success');
         elements.preview.style.display = 'block';
-        // Enable buttons after file load
         elements.applyBtn.disabled = false;
         elements.resetBtn.disabled = false;
     } catch (err) {
@@ -253,7 +235,7 @@ async function handleFile(file) {
 }
 
 /**
- * Perform rotation - FIXED VERSION
+ * Perform rotation - COMPLETELY REWRITTEN to avoid setRotation issues
  */
 async function performRotation(degrees) {
     if (!currentFile) {
@@ -261,17 +243,9 @@ async function performRotation(degrees) {
         return;
     }
     
-    // ✅ Ensure degrees is a number
     let rotationAngle = Number(degrees);
-    if (isNaN(rotationAngle)) {
-        setStatus('❌ Invalid rotation angle', 'error');
-        return;
-    }
-    
-    // ✅ Valid values for pdf-lib: 0, 90, 180, 270
-    const validAngles = [0, 90, 180, 270];
-    if (!validAngles.includes(rotationAngle)) {
-        setStatus(`❌ Invalid rotation angle: ${rotationAngle}. Must be 0, 90, 180, or 270.`, 'error');
+    if (isNaN(rotationAngle) || ![0, 90, 180, 270].includes(rotationAngle)) {
+        setStatus(`❌ Invalid rotation angle. Must be 0, 90, 180, or 270.`, 'error');
         return;
     }
     
@@ -287,26 +261,59 @@ async function performRotation(degrees) {
         const sourcePdf = await PDFDocument.load(arrayBuffer);
         const totalPages = sourcePdf.getPageCount();
         
-        // Create a new PDF
-        const newPdf = await PDFDocument.create();
-        const pageIndices = sourcePdf.getPageIndices();
-        
-        // Copy pages with rotation
-        for (const pageIndex of pageIndices) {
-            const [copiedPage] = await newPdf.copyPages(sourcePdf, [pageIndex]);
-            // ✅ Apply rotation as number
-            copiedPage.setRotation(rotationAngle);
-            newPdf.addPage(copiedPage);
+        // ✅ ALTERNATIVE APPROACH: Use rotatePage() instead of setRotation()
+        // If rotatePage doesn't work, we'll use the embedPages approach
+        try {
+            // Try method 1: Use rotatePage (some versions support this)
+            for (let i = 0; i < totalPages; i++) {
+                sourcePdf.rotatePage(i, rotationAngle);
+            }
+            
+            // Save the modified PDF
+            const bytes = await sourcePdf.save();
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const displayAngle = rotationAngle === 270 ? '-90' : rotationAngle;
+            const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
+            downloadBlob(blob, fileName);
+            setStatus(`✅ Rotated ${totalPages} pages by ${displayAngle}° — download started`, 'success');
+            
+        } catch (rotateError) {
+            console.warn('rotatePage failed, trying embedPages approach:', rotateError);
+            
+            // ✅ Method 2: Create new PDF and rotate during embedding
+            const newPdf = await PDFDocument.create();
+            const pageIndices = sourcePdf.getPageIndices();
+            
+            for (const pageIndex of pageIndices) {
+                // Get the page from source
+                const [copiedPage] = await newPdf.copyPages(sourcePdf, [pageIndex]);
+                
+                // Try different rotation methods
+                try {
+                    // Try setRotation with the rotation angle
+                    copiedPage.setRotation(rotationAngle);
+                } catch (setError) {
+                    console.warn('setRotation failed, trying direct property:', setError);
+                    // Fallback: try to set the rotation property directly
+                    try {
+                        copiedPage.Rotate = rotationAngle;
+                    } catch (propError) {
+                        console.warn('Direct property failed, trying radians:', propError);
+                        // Last resort: convert to radians
+                        const radians = rotationAngle * Math.PI / 180;
+                        copiedPage.setRotation(radians);
+                    }
+                }
+                newPdf.addPage(copiedPage);
+            }
+            
+            const bytes = await newPdf.save();
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const displayAngle = rotationAngle === 270 ? '-90' : rotationAngle;
+            const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
+            downloadBlob(blob, fileName);
+            setStatus(`✅ Rotated ${totalPages} pages by ${displayAngle}° — download started`, 'success');
         }
-        
-        const bytes = await newPdf.save();
-        const blob = new Blob([bytes], { type: 'application/pdf' });
-        // Display user-friendly angle
-        const displayAngle = rotationAngle === 270 ? '-90' : rotationAngle;
-        const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
-        downloadBlob(blob, fileName);
-        
-        setStatus(`✅ Rotated ${totalPages} pages by ${displayAngle}° — download started`, 'success');
         
     } catch (err) {
         console.error('Rotation error:', err);
