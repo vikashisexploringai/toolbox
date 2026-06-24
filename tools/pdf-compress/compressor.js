@@ -21,14 +21,14 @@ export function getToolHTML() {
                 📦 Reduce PDF file size
             </div>
             
-           <div id="dropZone" style="...">
-    <strong>📂 Drop PDFs anywhere</strong><br>
-    <span style="font-size:0.85rem;color:#64748B;">or</span>
-    <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
-        📁 Browse Files
-    </button>
-    <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
-</div>
+            <div id="compressDropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1rem;">
+                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop a PDF here</strong><br>
+                <span style="font-size:0.85rem;color:#64748B;">or</span>
+                <button id="compressBrowseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+                    📁 Browse Files
+                </button>
+                <input type="file" id="compressFileInput" accept=".pdf" style="display:none;">
+            </div>
             
             <div id="compressFileInfo" style="display:none;margin-top:0.5rem;padding:0.75rem 1rem;background:#F1F5F9;border-radius:12px;">
                 <span id="compressFileName" style="font-weight:600;">file.pdf</span> — 
@@ -62,6 +62,7 @@ export function initTool() {
     elements = {
         dropZone: document.getElementById('compressDropZone'),
         fileInput: document.getElementById('compressFileInput'),
+        browseBtn: document.getElementById('compressBrowseBtn'),
         fileInfo: document.getElementById('compressFileInfo'),
         fileName: document.getElementById('compressFileName'),
         fileSize: document.getElementById('compressFileSize'),
@@ -115,6 +116,7 @@ function loadPDFLibrary() {
  * Setup drag and drop
  */
 function setupDragAndDrop() {
+    // Drag over
     elements.dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#EEF4FF';
@@ -122,12 +124,14 @@ function setupDragAndDrop() {
         elements.dropZone.style.borderStyle = 'solid';
     });
     
+    // Drag leave
     elements.dropZone.addEventListener('dragleave', () => {
         elements.dropZone.style.background = '#FEFEFE';
         elements.dropZone.style.borderColor = '#94A3B8';
         elements.dropZone.style.borderStyle = 'dashed';
     });
     
+    // Drop
     elements.dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#FEFEFE';
@@ -139,10 +143,15 @@ function setupDragAndDrop() {
         else setStatus('No valid PDF file dropped', 'error');
     });
     
-    elements.dropZone.addEventListener('click', () => {
-        elements.fileInput.click();
-    });
+    // Browse button - opens file picker (NO double-click issue)
+    if (elements.browseBtn) {
+        elements.browseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            elements.fileInput.click();
+        });
+    }
     
+    // File input change
     elements.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
             const file = e.target.files[0];
@@ -198,11 +207,6 @@ async function performCompress() {
         
         // Quality settings (simplified approach)
         const quality = elements.quality.value;
-        // Note: pdf-lib doesn't have built-in compression settings.
-        // We'll re-save the PDF which applies some compression.
-        // For better compression, we could:
-        // - Remove unused objects
-        // - Compress page content streams
         
         // Create a new PDF and copy pages
         const newPdf = await PDFDocument.create();
@@ -210,23 +214,15 @@ async function performCompress() {
         const pages = await newPdf.copyPages(sourcePdf, pageIndices);
         pages.forEach(p => newPdf.addPage(p));
         
-        // Save with different compression levels
-        // pdf-lib saves with default compression
-        
-        // For quality, we can simulate by adjusting image quality
-        // but this requires more complex processing.
-        // For now, we'll show a size comparison based on re-saving.
         const compressedBytes = await newPdf.save();
         const originalSize = currentFile.size;
         const compressedSize = compressedBytes.length;
         const ratio = (compressedSize / originalSize * 100).toFixed(1);
         
-        // If compression didn't help much, adjust quality
         let qualityLabel = 'Normal';
         if (quality === 'high') qualityLabel = 'High';
         else if (quality === 'low') qualityLabel = 'Low';
         
-        // Download
         const blob = new Blob([compressedBytes], { type: 'application/pdf' });
         const filename = currentFile.name.replace('.pdf', `_compressed_${qualityLabel}.pdf`);
         downloadBlob(blob, filename);
