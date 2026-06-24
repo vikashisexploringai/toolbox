@@ -1,7 +1,7 @@
 /**
  * ========================================
  * PDF Merger Tool
- * Extracted from the provided code
+ * Merge multiple PDFs with drag & drop
  * ========================================
  */
 
@@ -9,9 +9,8 @@ let PDFDocument = null;
 let pdfLibLoaded = false;
 let loadingPromise = null;
 let pdfFiles = [];
-
-// DOM references (will be set when tool initializes)
 let elements = {};
+let statusTimeout = null;
 
 /**
  * Get the HTML for the merger tool
@@ -19,14 +18,14 @@ let elements = {};
 export function getToolHTML() {
     return `
         <div id="mergerTool">
-            <div id="dropZone" style="...">
-    <strong>📂 Drop PDFs anywhere</strong><br>
-    <span style="font-size:0.85rem;color:#64748B;">or</span>
-    <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
-        📁 Browse Files
-    </button>
-    <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
-</div>
+            <div id="dropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1.5rem;box-shadow:0 1px 2px rgba(0,0,0,0.02);">
+                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop PDFs anywhere</strong><br>
+                <span style="font-size:0.85rem;color:#64748B;">or</span>
+                <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+                    📁 Browse Files
+                </button>
+                <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
+            </div>
             
             <div style="display:flex;gap:0.85rem;flex-wrap:wrap;margin:0.75rem 0 1rem 0;align-items:center;justify-content:space-between;">
                 <div style="display:flex;gap:0.7rem;flex-wrap:wrap;">
@@ -62,10 +61,10 @@ export function getToolHTML() {
  * Initialize the PDF Merger tool
  */
 export function initTool() {
-    // Get all DOM elements after they're rendered
     elements = {
         dropZone: document.getElementById('dropZone'),
         fileInput: document.getElementById('fileInput'),
+        browseBtn: document.getElementById('browseBtn'),
         fileList: document.getElementById('fileList'),
         emptyMessage: document.getElementById('emptyMessage'),
         mergeBtn: document.getElementById('mergeBtn'),
@@ -75,15 +74,12 @@ export function initTool() {
         fileCounter: document.getElementById('fileCounter')
     };
     
-    // Reset state
     pdfFiles = [];
     
-    // Setup event listeners
     setupDragAndDrop();
     setupButtons();
     renderFileList();
     
-    // Preload PDF library
     loadPDFLibrary().catch(e => {
         console.warn("Background load warning (needs internet once):", e);
         setStatusMessage('📡 First run needs internet to load PDF engine. After that fully offline.', false);
@@ -128,6 +124,7 @@ function loadPDFLibrary() {
  * Setup drag and drop
  */
 function setupDragAndDrop() {
+    // Drag over
     elements.dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#EEF4FF';
@@ -136,6 +133,7 @@ function setupDragAndDrop() {
         elements.dropZone.style.transform = 'scale(0.99)';
     });
     
+    // Drag leave
     elements.dropZone.addEventListener('dragleave', () => {
         elements.dropZone.style.background = '#FEFEFE';
         elements.dropZone.style.borderColor = '#94A3B8';
@@ -143,6 +141,7 @@ function setupDragAndDrop() {
         elements.dropZone.style.transform = 'scale(1)';
     });
     
+    // Drop
     elements.dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         elements.dropZone.style.background = '#FEFEFE';
@@ -155,10 +154,15 @@ function setupDragAndDrop() {
         else setStatusMessage('No valid PDF files dropped', true);
     });
     
-    elements.dropZone.addEventListener('click', () => {
-        elements.fileInput.click();
-    });
+    // Browse button - opens file picker (NO double-click issue)
+    if (elements.browseBtn) {
+        elements.browseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            elements.fileInput.click();
+        });
+    }
     
+    // File input change
     elements.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
             const selected = Array.from(e.target.files);
@@ -189,7 +193,6 @@ function setStatusMessage(msg, isError = false, isSuccess = false) {
     el.style.backgroundColor = isError ? '#FEE2E2' : (isSuccess ? '#D1FAE5' : '#EEF2FF');
     el.style.color = isError ? '#B91C1C' : (isSuccess ? '#065F46' : '#1E293B');
     
-    // Auto-reset after 3 seconds
     if (statusTimeout) clearTimeout(statusTimeout);
     statusTimeout = setTimeout(() => {
         if (el.innerHTML === msg) {
@@ -200,7 +203,6 @@ function setStatusMessage(msg, isError = false, isSuccess = false) {
         }
     }, 3000);
 }
-let statusTimeout = null;
 
 /**
  * Add files
@@ -255,7 +257,6 @@ function renderFileList() {
     });
     elements.fileList.innerHTML = html;
     
-    // Attach events
     elements.fileList.querySelectorAll('.move-up').forEach(btn => {
         btn.addEventListener('click', () => {
             const idx = parseInt(btn.dataset.index);
@@ -355,7 +356,7 @@ function reverseSequence() {
     }
     pdfFiles.reverse();
     renderFileList();
-    setStatusMessage(`🔄 Sequence reversed!`, false, true);
+    setStatusMessage('🔄 Sequence reversed!', false, true);
 }
 
 /**
@@ -396,7 +397,7 @@ async function performMerge() {
             }
         }
         
-        setStatusMessage(`💾 Saving merged PDF...`, false);
+        setStatusMessage('💾 Saving merged PDF...', false);
         const mergedPdfBytes = await mergedPdf.save();
         const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
         const downloadUrl = URL.createObjectURL(blob);
