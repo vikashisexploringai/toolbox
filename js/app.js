@@ -40,7 +40,7 @@ const TOOLS = [
     description: 'Rotate PDF pages by 90° clockwise, counter-clockwise, or 180°.',
     tag: 'New',
     scriptPath: 'tools/pdf-rotate/rotator.js'
-}
+},
     {
         id: 'html-saver',
         icon: '💾',
@@ -48,7 +48,7 @@ const TOOLS = [
         description: 'Paste HTML code, preview it live, and download as a complete .html file.',
         tag: 'Stable',
         scriptPath: 'tools/html-saver/saver.js'
-    },
+    }
 ];
 
 // Cache for loaded tool modules
