@@ -33,6 +33,14 @@ const TOOLS = [
         tag: 'Beta',
         scriptPath: 'tools/pdf-compress/compressor.js'
     },
+       {
+    id: 'pdf-rotator',
+    icon: '🔄',
+    name: 'PDF Rotator',
+    description: 'Rotate PDF pages by 90° clockwise, counter-clockwise, or 180°.',
+    tag: 'New',
+    scriptPath: 'tools/pdf-rotate/rotator.js'
+}
     {
         id: 'html-saver',
         icon: '💾',
@@ -41,14 +49,6 @@ const TOOLS = [
         tag: 'Stable',
         scriptPath: 'tools/html-saver/saver.js'
     },
-    {
-    id: 'pdf-rotator',
-    icon: '🔄',
-    name: 'PDF Rotator',
-    description: 'Rotate PDF pages by 90° clockwise, counter-clockwise, or 180°.',
-    tag: 'New',
-    scriptPath: 'tools/pdf-rotate/rotator.js'
-}
 ];
 
 // Cache for loaded tool modules
