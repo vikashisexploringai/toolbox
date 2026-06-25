@@ -58,6 +58,14 @@ const TOOLS = [
     scriptPath: 'tools/jpg-to-pdf/converter.js'
 },
     {
+    id: 'docx-filler',
+    icon: '📝',
+    name: 'Docx Filler',
+    description: 'Upload a .docx with {{placeholders}}, fill values, download updated docx.',
+    tag: 'New',
+    scriptPath: 'tools/docx-filler/filler.js'
+},
+    {
         id: 'html-saver',
         icon: '💾',
         name: 'HTML Saver',
