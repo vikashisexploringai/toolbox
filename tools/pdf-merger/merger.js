@@ -126,15 +126,35 @@ function loadPDFLibrary() {
 /**
  * Setup file input (NO drop zone)
  */
+/**
+ * Setup file input (NO drop zone)
+ */
 function setupFileInput() {
+    // Guard against duplicate bindings if initTool() ever runs more than once
+    // on the same DOM (e.g. tool re-selected without a fresh re-render of the HTML).
+    // Cloning the nodes strips any previously attached listeners before we add ours,
+    // so a stray leftover listener from a prior initTool() call can't fire alongside
+    // this one and open the file picker twice.
+    if (elements.browseBtn) {
+        const freshBrowseBtn = elements.browseBtn.cloneNode(true);
+        elements.browseBtn.replaceWith(freshBrowseBtn);
+        elements.browseBtn = freshBrowseBtn;
+    }
+    if (elements.fileInput) {
+        const freshFileInput = elements.fileInput.cloneNode(true);
+        elements.fileInput.replaceWith(freshFileInput);
+        elements.fileInput = freshFileInput;
+    }
+
     // Browse button - opens file picker
     if (elements.browseBtn) {
         elements.browseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
             e.stopPropagation();
             elements.fileInput.click();
         });
     }
-    
+
     // File input change
     elements.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
