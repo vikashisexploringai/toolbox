@@ -1,14 +1,16 @@
 /**
  * ========================================
- * PDF Rotator Tool - FINAL WORKING VERSION
- * Uses pdf-lib with proper loading and rotation
+ * PDF Rotator Tool
+ * Rotate PDF pages by 90°, 180°, or 270°
  * ========================================
  */
 
 let PDFDocument = null;
+let degrees = null;
 let pdfLibLoaded = false;
 let loadingPromise = null;
 let currentFile = null;
+let currentFileBytes = null;
 let elements = {};
 
 /**
@@ -39,26 +41,16 @@ export function getToolHTML() {
             <div style="margin-top:1rem;">
                 <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">Rotation Options</label>
                 <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem;">
-                    <button class="rotation-option" data-degrees="90" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
-                        ↻ 90° CW
-                    </button>
-                    <button class="rotation-option" data-degrees="270" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
+                    <button id="rotateCCWBtn" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
                         ↺ 90° CCW
                     </button>
-                    <button class="rotation-option" data-degrees="180" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
+                    <button id="rotateCWBtn" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
+                        ↻ 90° CW
+                    </button>
+                    <button id="rotate180Btn" style="flex:1;min-width:80px;padding:0.7rem;border:2px solid #E2E8F0;border-radius:10px;background:white;cursor:pointer;transition:all 0.2s;font-weight:600;font-size:0.95rem;">
                         ↻ 180°
                     </button>
                 </div>
-                <div style="font-size:0.75rem;color:#64748B;margin-top:0.5rem;">💡 Select rotation angle, then click "Apply Rotation"</div>
-            </div>
-            
-            <div style="margin-top:1rem;display:flex;gap:0.75rem;flex-wrap:wrap;">
-                <button id="applyRotationBtn" disabled style="flex:1;padding:0.75rem;border:none;border-radius:12px;background:#4F46E5;color:white;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
-                    🔄 Apply Rotation
-                </button>
-                <button id="resetRotationBtn" disabled style="flex:0.5;padding:0.75rem;border:none;border-radius:12px;background:#F1F5F9;color:#475569;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
-                    Reset
-                </button>
             </div>
             
             <div id="rotationPreview" style="display:none;margin-top:1rem;padding:0.75rem;background:#F8FAFC;border-radius:12px;border:1px solid #E2E8F0;">
@@ -87,9 +79,9 @@ export function initTool() {
         fileName: document.getElementById('rotatorFileName'),
         fileSize: document.getElementById('rotatorFileSize'),
         pageCount: document.getElementById('rotatorPageCount'),
-        applyBtn: document.getElementById('applyRotationBtn'),
-        resetBtn: document.getElementById('resetRotationBtn'),
-        rotationOptions: document.querySelectorAll('.rotation-option'),
+        rotateCWBtn: document.getElementById('rotateCWBtn'),
+        rotateCCWBtn: document.getElementById('rotateCCWBtn'),
+        rotate180Btn: document.getElementById('rotate180Btn'),
         rotationDisplay: document.getElementById('rotationDisplay'),
         rotationPageDisplay: document.getElementById('rotationPageDisplay'),
         preview: document.getElementById('rotationPreview'),
@@ -97,32 +89,10 @@ export function initTool() {
     };
     
     currentFile = null;
-    let selectedRotation = 90;
+    currentFileBytes = null;
     
     setupDragAndDrop();
-    
-    elements.rotationOptions.forEach(btn => {
-        btn.addEventListener('click', () => {
-            elements.rotationOptions.forEach(b => {
-                b.style.borderColor = '#E2E8F0';
-                b.style.background = 'white';
-            });
-            btn.style.borderColor = '#4F46E5';
-            btn.style.background = '#EEF2FF';
-            selectedRotation = parseInt(btn.dataset.degrees, 10);
-            const displayAngle = selectedRotation === 270 ? '-90' : selectedRotation;
-            elements.rotationDisplay.textContent = displayAngle + '°';
-            if (currentFile) {
-                elements.preview.style.display = 'block';
-                elements.applyBtn.disabled = false;
-                elements.resetBtn.disabled = false;
-                setStatus(`✅ Ready to rotate by ${displayAngle}°`, 'info');
-            }
-        });
-    });
-    
-    elements.applyBtn.addEventListener('click', () => performRotation(selectedRotation));
-    elements.resetBtn.addEventListener('click', resetRotation);
+    setupButtons();
     
     // Preload PDF library
     loadPDFLibrary().catch(e => console.warn('PDF library background load:', e));
@@ -131,27 +101,26 @@ export function initTool() {
 }
 
 /**
- * Load PDF-Lib library - FIXED
+ * Load PDF-Lib library
  */
 function loadPDFLibrary() {
     if (pdfLibLoaded && PDFDocument) return Promise.resolve();
     if (loadingPromise) return loadingPromise;
     
     loadingPromise = new Promise((resolve, reject) => {
-        // Check if already loaded
         if (window.PDFLib) {
             PDFDocument = window.PDFLib.PDFDocument;
+            degrees = window.PDFLib.degrees;
             pdfLibLoaded = true;
             resolve();
             return;
         }
-        
-        // Load the library
         const script = document.createElement('script');
-        script.src = 'https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
         script.onload = () => {
             if (window.PDFLib) {
                 PDFDocument = window.PDFLib.PDFDocument;
+                degrees = window.PDFLib.degrees;
                 pdfLibLoaded = true;
                 resolve();
             } else {
@@ -217,130 +186,146 @@ function setupDragAndDrop() {
  */
 async function handleFile(file) {
     currentFile = file;
+    currentFileBytes = await file.arrayBuffer();
+    
     elements.fileName.textContent = file.name;
     elements.fileSize.textContent = (file.size / 1024).toFixed(1) + ' KB';
     elements.fileInfo.style.display = 'block';
     
     try {
         await loadPDFLibrary();
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await PDFDocument.load(arrayBuffer);
-        const pageCount = pdf.getPageCount();
+        const srcDoc = await PDFDocument.load(currentFileBytes);
+        const pageCount = srcDoc.getPageCount();
         elements.pageCount.textContent = pageCount;
         elements.rotationPageDisplay.textContent = pageCount + ' pages';
-        setStatus(`✅ Loaded "${file.name}" — ${pageCount} pages. Select rotation angle.`, 'success');
         elements.preview.style.display = 'block';
-        elements.applyBtn.disabled = false;
-        elements.resetBtn.disabled = false;
+        elements.rotateCWBtn.disabled = false;
+        elements.rotateCCWBtn.disabled = false;
+        elements.rotate180Btn.disabled = false;
+        setStatus(`✅ Loaded "${file.name}" — ${pageCount} pages. Select rotation angle.`, 'success');
     } catch (err) {
         elements.pageCount.textContent = '?';
-        setStatus(`⚠️ Loaded but could not read page count`, 'info');
+        setStatus(`⚠️ Could not read PDF: ${err.message}`, 'error');
     }
 }
 
 /**
- * Perform rotation - WORKING APPROACH
+ * Setup rotation buttons
  */
-async function performRotation(degrees) {
-    if (!currentFile) {
+function setupButtons() {
+    elements.rotateCWBtn.addEventListener('click', () => rotatePdf(-90));
+    elements.rotateCCWBtn.addEventListener('click', () => rotatePdf(90));
+    elements.rotate180Btn.addEventListener('click', () => rotatePdf(180));
+    
+    // Initially disabled
+    elements.rotateCWBtn.disabled = true;
+    elements.rotateCCWBtn.disabled = true;
+    elements.rotate180Btn.disabled = true;
+}
+
+/**
+ * ⭐ THE WORKING APPROACH - Using embedPages() + drawPage()
+ * This is what the working code uses
+ */
+async function rotatePdf(angle) {
+    if (!currentFileBytes) {
         setStatus('Please upload a PDF first', 'error');
         return;
     }
     
-    let rotationAngle = Number(degrees);
-    if (isNaN(rotationAngle) || ![0, 90, 180, 270].includes(rotationAngle)) {
-        setStatus(`❌ Invalid rotation angle. Must be 0, 90, 180, or 270.`, 'error');
-        return;
-    }
+    // Disable buttons
+    elements.rotateCWBtn.disabled = true;
+    elements.rotateCCWBtn.disabled = true;
+    elements.rotate180Btn.disabled = true;
+    elements.rotateCWBtn.textContent = '⏳ Processing...';
+    elements.rotateCCWBtn.textContent = '⏳ Processing...';
+    elements.rotate180Btn.textContent = '⏳ Processing...';
     
-    elements.applyBtn.disabled = true;
-    elements.applyBtn.innerHTML = '⏳ Processing...';
-    setStatus('⏳ Processing PDF...', 'info');
+    setStatus('⏳ Rotating PDF...', 'info');
     
     try {
         await loadPDFLibrary();
         if (!PDFDocument) throw new Error('PDF library unavailable');
         
-        const arrayBuffer = await currentFile.arrayBuffer();
-        const sourcePdf = await PDFDocument.load(arrayBuffer);
-        const totalPages = sourcePdf.getPageCount();
+        const srcDoc = await PDFDocument.load(currentFileBytes);
+        const outDoc = await PDFDocument.create();
         
-        // Create a new PDF
-        const newPdf = await PDFDocument.create();
+        const indices = srcDoc.getPageIndices();
+        const embeddedPages = await outDoc.embedPages(srcDoc.getPages());
         
-        // Process each page
-        for (let i = 0; i < totalPages; i++) {
-            // Copy the page
-            const [copiedPage] = await newPdf.copyPages(sourcePdf, [i]);
+        // Normalize angle to 0-360 range (positive = counterclockwise)
+        const norm = ((angle % 360) + 360) % 360;
+        
+        // Display name for status
+        let angleName = '';
+        if (norm === 90) angleName = '90° CCW';
+        else if (norm === 270) angleName = '90° CW';
+        else if (norm === 180) angleName = '180°';
+        
+        let displayAngle = norm;
+        if (displayAngle === 270) displayAngle = -90;
+        
+        indices.forEach((_, i) => {
+            const embedded = embeddedPages[i];
+            const { width, height } = embedded;
             
-            // Try different rotation methods
-            let rotationApplied = false;
+            // Swap dimensions for 90° and 270° rotations
+            const swap = (Math.abs(angle) % 180) === 90;
+            const newWidth = swap ? height : width;
+            const newHeight = swap ? width : height;
             
-            // Method 1: Try setRotation with the angle
-            try {
-                copiedPage.setRotation(rotationAngle);
-                rotationApplied = true;
-            } catch (e1) {
-                console.log('setRotation failed, trying alternative:', e1.message);
-                
-                // Method 2: Try using the Rotate property directly
-                try {
-                    copiedPage.node.set('Rotate', rotationAngle);
-                    rotationApplied = true;
-                } catch (e2) {
-                    console.log('node.set failed, trying media box swap:', e2.message);
-                    
-                    // Method 3: Swap width/height for 90/270 degree rotations
-                    if (rotationAngle === 90 || rotationAngle === 270) {
-                        const { width, height } = copiedPage.getSize();
-                        copiedPage.setMediaBox(0, 0, height, width);
-                        rotationApplied = true;
-                    }
-                }
+            const page = outDoc.addPage([newWidth, newHeight]);
+            
+            // Calculate translation so all 4 corners fit in the new page
+            let x = 0, y = 0;
+            if (norm === 90) { 
+                // CCW: rotate 90° counterclockwise
+                x = height; 
+                y = 0; 
+            } else if (norm === 270) { 
+                // CW: rotate 90° clockwise
+                x = 0; 
+                y = width; 
+            } else if (norm === 180) { 
+                // 180° rotation
+                x = width; 
+                y = height; 
             }
             
-            // If no rotation method worked, use a simple approach
-            if (!rotationApplied) {
-                console.warn('All rotation methods failed for page', i, 'skipping rotation');
-                // Just add the page as-is
-            }
-            
-            newPdf.addPage(copiedPage);
-        }
+            page.drawPage(embedded, {
+                x: x,
+                y: y,
+                rotate: degrees(norm),
+            });
+        });
         
-        const bytes = await newPdf.save();
-        const blob = new Blob([bytes], { type: 'application/pdf' });
-        const displayAngle = rotationAngle === 270 ? '-90' : rotationAngle;
-        const fileName = currentFile.name.replace('.pdf', `_rotated_${displayAngle}deg.pdf`);
-        downloadBlob(blob, fileName);
+        const outBytes = await outDoc.save();
         
-        setStatus(`✅ Rotated ${totalPages} pages by ${displayAngle}° — download started`, 'success');
+        // Download
+        const fileName = currentFile.name.replace(/\.pdf$/i, `_rotated_${displayAngle}deg.pdf`);
+        downloadBlob(outBytes, fileName);
+        
+        setStatus(`✅ Rotated ${indices.length} pages by ${angleName} — download started`, 'success');
         
     } catch (err) {
         console.error('Rotation error:', err);
         setStatus(`❌ Rotation failed: ${err.message}`, 'error');
     } finally {
-        elements.applyBtn.disabled = false;
-        elements.applyBtn.innerHTML = '🔄 Apply Rotation';
+        // Re-enable buttons
+        elements.rotateCWBtn.disabled = false;
+        elements.rotateCCWBtn.disabled = false;
+        elements.rotate180Btn.disabled = false;
+        elements.rotateCWBtn.textContent = '↻ 90° CW';
+        elements.rotateCCWBtn.textContent = '↺ 90° CCW';
+        elements.rotate180Btn.textContent = '↻ 180°';
     }
-}
-
-/**
- * Reset rotation preview
- */
-function resetRotation() {
-    elements.rotationDisplay.textContent = '0°';
-    elements.rotationOptions.forEach(b => {
-        b.style.borderColor = '#E2E8F0';
-        b.style.background = 'white';
-    });
-    setStatus('🔄 Rotation reset. Select a new angle.', 'info');
 }
 
 /**
  * Download a blob
  */
-function downloadBlob(blob, filename) {
+function downloadBlob(bytes, filename) {
+    const blob = new Blob([bytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
