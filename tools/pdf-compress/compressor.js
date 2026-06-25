@@ -113,16 +113,31 @@ function loadPDFLibrary() {
 
 /**
  * Setup file input (NO drop zone)
+ *//**
+ * Setup file input with clean event listeners
  */
 function setupFileInput() {
+    // Guard against duplicate bindings
+    if (elements.browseBtn) {
+        const freshBrowseBtn = elements.browseBtn.cloneNode(true);
+        elements.browseBtn.replaceWith(freshBrowseBtn);
+        elements.browseBtn = freshBrowseBtn;
+    }
+    if (elements.fileInput) {
+        const freshFileInput = elements.fileInput.cloneNode(true);
+        elements.fileInput.replaceWith(freshFileInput);
+        elements.fileInput = freshFileInput;
+    }
+
     // Browse button - opens file picker
     if (elements.browseBtn) {
         elements.browseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
             e.stopPropagation();
             elements.fileInput.click();
         });
     }
-    
+
     // File input change
     elements.fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length) {
