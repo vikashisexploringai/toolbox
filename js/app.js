@@ -58,6 +58,14 @@ const TOOLS = [
     scriptPath: 'tools/jpg-to-pdf/converter.js'
 },
     {
+    id: 'docx-mailmerge',
+    icon: '📧',
+    name: 'Docx Mail Merge',
+    description: 'Generate multiple .docx files from Excel data using a .docx template with {{placeholders}}.',
+    tag: 'New',
+    scriptPath: 'tools/docx-mailmerge/merge.js'
+},
+    {
     id: 'docx-filler',
     icon: '📝',
     name: 'Docx Filler',
