@@ -21,10 +21,10 @@ export function getToolHTML() {
                 ✂️ Split a PDF by page ranges
             </div>
             
-            <div id="splitDropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1rem;">
-                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop a PDF here</strong><br>
-                <span style="font-size:0.85rem;color:#64748B;">or</span>
-                <button id="splitBrowseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+            <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;background:#FEFEFE;margin-bottom:1rem;">
+                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Select a PDF file</strong><br>
+                <span style="font-size:0.85rem;color:#64748B;">Click the button below to browse</span><br>
+                <button id="splitBrowseBtn" style="margin:0.75rem 0;padding:0.6rem 2rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
                     📁 Browse Files
                 </button>
                 <input type="file" id="splitFileInput" accept=".pdf" style="display:none;">
@@ -57,9 +57,7 @@ export function getToolHTML() {
  * Initialize the PDF Splitter tool
  */
 export function initTool() {
-    // Get DOM elements
     elements = {
-        dropZone: document.getElementById('splitDropZone'),
         fileInput: document.getElementById('splitFileInput'),
         browseBtn: document.getElementById('splitBrowseBtn'),
         fileInfo: document.getElementById('splitFileInfo'),
@@ -71,16 +69,12 @@ export function initTool() {
         status: document.getElementById('splitStatus')
     };
     
-    // Reset state
     currentFile = null;
     
-    // Setup event listeners
-    setupDragAndDrop();
+    setupFileInput();
     setupSplitButton();
     
-    // Preload PDF library
     loadPDFLibrary().catch(e => console.warn('PDF library background load:', e));
-    
     setStatus('📄 Upload a PDF to split', 'info');
 }
 
@@ -117,37 +111,10 @@ function loadPDFLibrary() {
 }
 
 /**
- * Setup drag and drop
+ * Setup file input (NO drop zone)
  */
-function setupDragAndDrop() {
-    // Drag over
-    elements.dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        elements.dropZone.style.background = '#EEF4FF';
-        elements.dropZone.style.borderColor = '#4F46E5';
-        elements.dropZone.style.borderStyle = 'solid';
-    });
-    
-    // Drag leave
-    elements.dropZone.addEventListener('dragleave', () => {
-        elements.dropZone.style.background = '#FEFEFE';
-        elements.dropZone.style.borderColor = '#94A3B8';
-        elements.dropZone.style.borderStyle = 'dashed';
-    });
-    
-    // Drop
-    elements.dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        elements.dropZone.style.background = '#FEFEFE';
-        elements.dropZone.style.borderColor = '#94A3B8';
-        elements.dropZone.style.borderStyle = 'dashed';
-        
-        const files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-        if (files.length) handleFile(files[0]);
-        else setStatus('No valid PDF file dropped', 'error');
-    });
-    
-    // Browse button - opens file picker (NO double-click issue)
+function setupFileInput() {
+    // Browse button - opens file picker
     if (elements.browseBtn) {
         elements.browseBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -179,7 +146,6 @@ async function handleFile(file) {
     elements.fileInfo.style.display = 'block';
     elements.splitBtn.disabled = false;
     
-    // Try to get page count
     try {
         await loadPDFLibrary();
         const arrayBuffer = await file.arrayBuffer();
@@ -227,18 +193,15 @@ async function performSplit() {
         const sourcePdf = await PDFDocument.load(arrayBuffer);
         const totalPages = sourcePdf.getPageCount();
         
-        // Parse ranges
         const rangesArray = parseRanges(ranges, totalPages);
         if (rangesArray.length === 0) {
             setStatus('⚠️ No valid page ranges found', 'error');
             return;
         }
         
-        // Create a new PDF for each range
         const fileName = currentFile.name.replace('.pdf', '');
         
         if (rangesArray.length === 1) {
-            // Single range - create one PDF
             const [start, end] = rangesArray[0];
             const newPdf = await PDFDocument.create();
             const pages = await newPdf.copyPages(sourcePdf, getPageIndices(start, end));
@@ -247,7 +210,6 @@ async function performSplit() {
             downloadPDF(bytes, `${fileName}_pages-${start}-${end}.pdf`);
             setStatus(`✅ Created 1 PDF (pages ${start}-${end})`, 'success');
         } else {
-            // Multiple ranges - create multiple PDFs
             const pdfBlobs = [];
             for (let i = 0; i < rangesArray.length; i++) {
                 const [start, end] = rangesArray[i];
@@ -261,7 +223,6 @@ async function performSplit() {
                 });
             }
             
-            // Download all
             if (pdfBlobs.length === 1) {
                 downloadBlob(pdfBlobs[0].blob, pdfBlobs[0].name);
             } else {
@@ -281,9 +242,6 @@ async function performSplit() {
     }
 }
 
-/**
- * Parse page ranges
- */
 function parseRanges(input, totalPages) {
     const ranges = [];
     const parts = input.split(',').map(s => s.trim());
@@ -304,9 +262,6 @@ function parseRanges(input, totalPages) {
     return ranges;
 }
 
-/**
- * Get page indices (0-based)
- */
 function getPageIndices(start, end) {
     const indices = [];
     for (let i = start; i <= end; i++) {
@@ -315,17 +270,11 @@ function getPageIndices(start, end) {
     return indices;
 }
 
-/**
- * Download a PDF blob
- */
 function downloadPDF(bytes, filename) {
     const blob = new Blob([bytes], { type: 'application/pdf' });
     downloadBlob(blob, filename);
 }
 
-/**
- * Download a blob
- */
 function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -337,9 +286,6 @@ function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
-/**
- * Set status message
- */
 function setStatus(msg, type = 'info') {
     if (!elements.status) return;
     const colors = {
