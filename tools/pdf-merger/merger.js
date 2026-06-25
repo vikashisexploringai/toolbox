@@ -18,10 +18,14 @@ let statusTimeout = null;
 export function getToolHTML() {
     return `
         <div id="mergerTool">
-            <div id="dropZone" style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;cursor:pointer;background:#FEFEFE;transition:all 0.2s;margin-bottom:1.5rem;box-shadow:0 1px 2px rgba(0,0,0,0.02);">
-                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Drop PDFs anywhere</strong><br>
-                <span style="font-size:0.85rem;color:#64748B;">or</span>
-                <button id="browseBtn" style="margin:0.5rem 0;padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+            <div style="padding:0.75rem 1rem;border-radius:12px;background:#EEF2FF;margin-bottom:1rem;font-weight:500;color:#1E293B;">
+                📑 Merge multiple PDFs
+            </div>
+            
+            <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:2rem 1.5rem;text-align:center;background:#FEFEFE;margin-bottom:1rem;">
+                <strong style="font-size:1.1rem;color:#1F3A6B;">📂 Select PDF files</strong><br>
+                <span style="font-size:0.85rem;color:#64748B;">Click the button below to browse</span><br>
+                <button id="browseBtn" style="margin:0.75rem 0;padding:0.6rem 2rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
                     📁 Browse Files
                 </button>
                 <input type="file" id="fileInput" multiple accept=".pdf" style="display:none;">
@@ -44,7 +48,7 @@ export function getToolHTML() {
             </div>
             
             <div id="fileList" style="background:#FAFCFF;border-radius:1.25rem;padding:0.65rem;margin:1.2rem 0;max-height:340px;overflow-y:auto;border:1px solid #EEF2F6;box-shadow:inset 0 1px 3px #00000008;">
-                <div id="emptyMessage" style="text-align:center;color:#6C757D;padding:2rem;font-style:italic;">✨ No PDFs selected — drag & drop or click above</div>
+                <div id="emptyMessage" style="text-align:center;color:#6C757D;padding:2rem;font-style:italic;">✨ No PDFs selected — click Browse to add files</div>
             </div>
             
             <button id="mergeBtn" disabled style="width:100%;border:none;font-weight:600;padding:0.85rem;border-radius:2rem;cursor:pointer;font-size:0.95rem;transition:all 0.2s;background:#4F46E5;color:white;box-shadow:0 4px 8px rgba(79,70,229,0.2);justify-content:center;display:flex;align-items:center;gap:8px;">
@@ -62,7 +66,6 @@ export function getToolHTML() {
  */
 export function initTool() {
     elements = {
-        dropZone: document.getElementById('dropZone'),
         fileInput: document.getElementById('fileInput'),
         browseBtn: document.getElementById('browseBtn'),
         fileList: document.getElementById('fileList'),
@@ -76,7 +79,7 @@ export function initTool() {
     
     pdfFiles = [];
     
-    setupDragAndDrop();
+    setupFileInput();
     setupButtons();
     renderFileList();
     
@@ -121,40 +124,10 @@ function loadPDFLibrary() {
 }
 
 /**
- * Setup drag and drop
+ * Setup file input (NO drop zone)
  */
-function setupDragAndDrop() {
-    // Drag over
-    elements.dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        elements.dropZone.style.background = '#EEF4FF';
-        elements.dropZone.style.borderColor = '#4F46E5';
-        elements.dropZone.style.borderStyle = 'solid';
-        elements.dropZone.style.transform = 'scale(0.99)';
-    });
-    
-    // Drag leave
-    elements.dropZone.addEventListener('dragleave', () => {
-        elements.dropZone.style.background = '#FEFEFE';
-        elements.dropZone.style.borderColor = '#94A3B8';
-        elements.dropZone.style.borderStyle = 'dashed';
-        elements.dropZone.style.transform = 'scale(1)';
-    });
-    
-    // Drop
-    elements.dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        elements.dropZone.style.background = '#FEFEFE';
-        elements.dropZone.style.borderColor = '#94A3B8';
-        elements.dropZone.style.borderStyle = 'dashed';
-        elements.dropZone.style.transform = 'scale(1)';
-        
-        const files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-        if (files.length) addFiles(files);
-        else setStatusMessage('No valid PDF files dropped', true);
-    });
-    
-    // Browse button - opens file picker (NO double-click issue)
+function setupFileInput() {
+    // Browse button - opens file picker
     if (elements.browseBtn) {
         elements.browseBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -231,7 +204,7 @@ function renderFileList() {
     if (!elements.fileList) return;
     
     if (pdfFiles.length === 0) {
-        elements.fileList.innerHTML = '<div style="text-align:center;color:#6C757D;padding:2rem;font-style:italic;">📭 No PDFs — drag & drop or click to add</div>';
+        elements.fileList.innerHTML = '<div style="text-align:center;color:#6C757D;padding:2rem;font-style:italic;">📭 No PDFs — click Browse to add files</div>';
         updateCounter();
         return;
     }
