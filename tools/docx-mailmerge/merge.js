@@ -28,7 +28,7 @@ export function getToolHTML() {
             
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
                 <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">1. Word Template (.docx)</label>
-                <div style="display:flex;align-items:center;gap:0.75rem;">
+                <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
                     <button id="docxBrowseBtn" style="padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
                         📁 Browse Template
                     </button>
@@ -46,7 +46,7 @@ export function getToolHTML() {
             
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
                 <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">2. Excel Data (.xlsx)</label>
-                <div style="display:flex;align-items:center;gap:0.75rem;">
+                <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
                     <button id="xlsxBrowseBtn" disabled style="padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#CBD5E1;color:#64748B;font-weight:600;cursor:not-allowed;transition:all 0.2s;">
                         📁 Browse Data
                     </button>
@@ -206,11 +206,13 @@ async function handleDocx(file) {
     elements.docxStatus.style.color = '#64748B';
     elements.templateDownloadContainer.style.display = 'none';
     elements.templateMsg.textContent = '';
+    
+    // ✅ Disable data browse button until template is downloaded
     elements.xlsxBrowseBtn.disabled = true;
     elements.xlsxBrowseBtn.style.background = '#CBD5E1';
     elements.xlsxBrowseBtn.style.color = '#64748B';
     elements.xlsxBrowseBtn.style.cursor = 'not-allowed';
-    elements.xlsxFileName.textContent = 'Upload template first';
+    elements.xlsxFileName.textContent = 'Download template first';
     elements.xlsxFileName.style.color = '#64748B';
     elements.xlsxStatus.textContent = '';
     elements.previewContainer.innerHTML = '';
@@ -257,17 +259,13 @@ async function handleDocx(file) {
         elements.templateDownloadLink.href = templateUrl;
         elements.templateDownloadLink.download = 'data_template.xlsx';
         elements.templateDownloadContainer.style.display = 'block';
-        elements.templateMsg.textContent = '📝 Fill in the template with data, then upload it below.';
+        elements.templateMsg.textContent = '📝 Click the button above to download the template, fill it with data, then upload it below.';
         elements.templateMsg.style.color = '#b58b00';
 
-        elements.xlsxBrowseBtn.disabled = false;
-        elements.xlsxBrowseBtn.style.background = '#4F46E5';
-        elements.xlsxBrowseBtn.style.color = 'white';
-        elements.xlsxBrowseBtn.style.cursor = 'pointer';
-        elements.xlsxFileName.textContent = 'Ready for data file';
-        elements.xlsxFileName.style.color = '#4F46E5';
+        // ✅ Data browse button stays disabled until template download is clicked
+        // The click listener on templateDownloadLink will enable it
 
-        setStatus('✅ Template loaded. Download and fill the Excel template, then upload it.', 'success');
+        setStatus('✅ Template loaded. Click "Download Excel Template", fill it, then upload.', 'success');
         checkReady();
     } catch (err) {
         elements.docxStatus.textContent = '❌ Error reading template: ' + err.message;
@@ -307,6 +305,34 @@ function setupXlsxInput() {
         }
         elements.xlsxFileInput.value = '';
     });
+}
+
+/**
+ * ✅ FIX: Enable data browse ONLY when template download link is clicked
+ */
+function setupTemplateDownloadListener() {
+    // Remove old listener if exists
+    if (elements.templateDownloadLink._listener) {
+        elements.templateDownloadLink.removeEventListener('click', elements.templateDownloadLink._listener);
+    }
+    
+    const handler = () => {
+        // Enable the data browse button
+        elements.xlsxBrowseBtn.disabled = false;
+        elements.xlsxBrowseBtn.style.background = '#4F46E5';
+        elements.xlsxBrowseBtn.style.color = 'white';
+        elements.xlsxBrowseBtn.style.cursor = 'pointer';
+        elements.xlsxFileName.textContent = 'Ready for data file';
+        elements.xlsxFileName.style.color = '#4F46E5';
+        elements.templateMsg.textContent = '✅ Template downloaded — fill it in, then upload it below.';
+        elements.templateMsg.style.color = '#065F46';
+        
+        // Remove the listener after first click so it doesn't fire multiple times
+        elements.templateDownloadLink.removeEventListener('click', handler);
+    };
+    
+    elements.templateDownloadLink._listener = handler;
+    elements.templateDownloadLink.addEventListener('click', handler);
 }
 
 /**
