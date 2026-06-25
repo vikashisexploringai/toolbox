@@ -204,26 +204,28 @@ async function handleFile(file) {
 }
 
 /**
- * Removes XML tags that fall between matching {{ and }} so that
- * (e.g. {{na</w:t>...<w:t>me}}) are still recognized, and returns plain {{key}} tokens.
+ * ✅ UPDATED: Removes XML tags that fall between matching {{ and }}
+ * Now supports spaces in placeholder names (e.g. {{Full Name}})
  */
 function dewordify(xmlStr) {
-    const pattern = /\{\{\s*(?:<[^>]+>\s*)*([a-zA-Z0-9_]+)\s*(?:<[^>]+>\s*)*\}\}/g;
-    return xmlStr.replace(pattern, (match, key) => '{{' + key + '}}');
+    const pattern = /\{\{\s*(?:<[^>]+>\s*)*([a-zA-Z0-9_ ]+?)\s*(?:<[^>]+>\s*)*\}\}/g;
+    return xmlStr.replace(pattern, (match, key) => '{{' + key.trim() + '}}');
 }
 
 /**
- * Extract all placeholder keys from normalized XML
+ * ✅ UPDATED: Extract all placeholder keys from normalized XML
+ * Now supports spaces in placeholder names
  */
 function extractKeys(normalizedXml) {
     const keys = [];
     const seen = new Set();
-    const re = /\{\{([a-zA-Z0-9_]+)\}\}/g;
+    const re = /\{\{([a-zA-Z0-9_ ]+)\}\}/g;
     let m;
     while ((m = re.exec(normalizedXml)) !== null) {
-        if (!seen.has(m[1])) {
-            seen.add(m[1]);
-            keys.push(m[1]);
+        const key = m[1].trim();
+        if (!seen.has(key)) {
+            seen.add(key);
+            keys.push(key);
         }
     }
     return keys;
