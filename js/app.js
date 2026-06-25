@@ -42,6 +42,22 @@ const TOOLS = [
     scriptPath: 'tools/pdf-rotate/rotator.js'
 },
     {
+    id: 'pdf-to-jpg',
+    icon: '📸',
+    name: 'PDF to JPG',
+    description: 'Convert PDF pages to JPG images. Adjust quality and scale.',
+    tag: 'New',
+    scriptPath: 'tools/pdf-to-jpg/converter.js'
+},
+{
+    id: 'jpg-to-pdf',
+    icon: '📄',
+    name: 'JPG to PDF',
+    description: 'Convert multiple JPG images into a single PDF file.',
+    tag: 'New',
+    scriptPath: 'tools/jpg-to-pdf/converter.js'
+},
+    {
         id: 'html-saver',
         icon: '💾',
         name: 'HTML Saver',
