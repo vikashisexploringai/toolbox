@@ -204,8 +204,8 @@ async function handleFile(file) {
 }
 
 /**
- * ✅ UPDATED: Removes XML tags that fall between matching {{ and }}
- * Now supports spaces in placeholder names (e.g. {{Full Name}})
+ * Removes XML tags that fall between matching {{ and }}
+ * Supports spaces in placeholder names (e.g. {{Full Name}})
  */
 function dewordify(xmlStr) {
     const pattern = /\{\{\s*(?:<[^>]+>\s*)*([a-zA-Z0-9_ ]+?)\s*(?:<[^>]+>\s*)*\}\}/g;
@@ -213,8 +213,8 @@ function dewordify(xmlStr) {
 }
 
 /**
- * ✅ UPDATED: Extract all placeholder keys from normalized XML
- * Now supports spaces in placeholder names
+ * Extract all placeholder keys from normalized XML
+ * Supports spaces in placeholder names
  */
 function extractKeys(normalizedXml) {
     const keys = [];
@@ -229,6 +229,18 @@ function extractKeys(normalizedXml) {
         }
     }
     return keys;
+}
+
+/**
+ * ✅ NEW: Escape XML special characters
+ */
+function escapeXml(str) {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
 }
 
 /**
@@ -313,7 +325,8 @@ async function generateDocument() {
         detectedKeys.forEach((key) => {
             const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const re = new RegExp('\\{\\{' + escaped + '\\}\\}', 'g');
-            normalized = normalized.replace(re, values[key]);
+            // ✅ NEW: Escape XML special characters in the replacement value
+            normalized = normalized.replace(re, escapeXml(values[key]));
         });
         
         zip.file(docXmlPath, normalized);
