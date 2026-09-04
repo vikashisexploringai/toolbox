@@ -80,7 +80,15 @@ const TOOLS = [
         description: 'Paste HTML code, preview it live, and download as a complete .html file.',
         tag: 'Stable',
         scriptPath: 'tools/html-saver/saver.js'
-    }
+    },
+    {
+    id: 'gst-pdf-to-excel',
+    icon: '🧾',
+    name: 'GST Returns to Excel',
+    description: 'Upload multiple GST return PDFs (GSTR-1, 3B, 2A/2B, 9, etc.), get one Excel file per PDF back in a zip.',
+    tag: 'New',
+    scriptPath: 'tools/gst-pdf-to-excel/converter.js'
+}
 ];
 
 // Cache for loaded tool modules
