@@ -13,8 +13,9 @@
  */
 
 // ---- Tunable heuristics (adjust based on real-world GST PDF testing) ----
-const ROW_Y_TOLERANCE = 3;        // px difference to treat two text items as same row
-const COLUMN_GAP_THRESHOLD = 12;  // px gap to treat two x-positions as different columns
+const ROW_Y_TOLERANCE = 3;          // px difference to treat two text items as same row
+const WATERMARK_FONT_SIZE = 40;     // items rendered at/above this size are treated as a stamp/watermark, not table content
+                                     // (portal "FILED" stamps in sample PDFs render at ~117-167pt vs ~8-18pt for real text)
 const PDFJS_VERSION = '3.11.174';
 const PDFJS_LIB_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
@@ -359,17 +360,19 @@ async function convertSinglePdf(file) {
             .map(it => ({
                 str: it.str,
                 x: it.transform[4],
-                y: it.transform[5]
-            }));
+                y: it.transform[5],
+                // transform[3] approximates rendered font size for unrotated text
+                fontSize: Math.abs(it.transform[3]) || 0
+            }))
+            .filter(it => it.fontSize < WATERMARK_FONT_SIZE);
 
         if (items.length === 0) continue;
 
         fullText += ' ' + items.map(i => i.str).join(' ');
 
-        const columnBins = buildColumnBins(items);
         const rowGroups = clusterRows(items);
         rowGroups.forEach(rowItems => {
-            allRows.push(assignToColumns(rowItems, columnBins));
+            allRows.push(buildRowCells(rowItems));
         });
     }
 
@@ -406,52 +409,59 @@ function clusterRows(items) {
 }
 
 /**
- * Build column boundaries for a page based on gaps between x-positions of all items on it
+ * Split a row's text items into [label, value1, value2, ...].
+ *
+ * Rationale: page-wide x-position clustering does not hold up on real GST
+ * PDFs, because wrapped label text starts at wildly different x-offsets
+ * across different rows, filling in the gaps that would otherwise separate
+ * "true" columns. Numbers, however, are a reliable signal — GST tables are
+ * consistently "description, then N right-hand values" — so we walk each
+ * row left to right, treat everything before the first value-looking token
+ * as the label, and place every value-looking token after that in order.
+ *
+ * The row's very first token is never treated as a value, even if it looks
+ * numeric — this avoids misreading leading section numbers like "3.1" or
+ * "5.1" in a heading as a data value. A numeric token appearing later in a
+ * sentence (e.g. a cross-reference to another section number) can still be
+ * misread this way; that's a known residual limitation worth a manual check.
  */
-function buildColumnBins(items) {
-    const xs = [...new Set(items.map(i => Math.round(i.x)))].sort((a, b) => a - b);
-    const bins = [];
-    let binStart = xs[0];
-    let prev = xs[0];
+function buildRowCells(rowItems) {
+    const label = [];
+    const values = [];
+    let seenValue = false;
 
-    xs.forEach(x => {
-        if (x - prev > COLUMN_GAP_THRESHOLD) {
-            bins.push({ start: binStart, end: prev });
-            binStart = x;
+    rowItems.forEach((item, idx) => {
+        const raw = item.str.trim();
+        if (!raw) return;
+
+        const treatAsValue = idx > 0 && isValueToken(raw);
+
+        if (treatAsValue) {
+            seenValue = true;
+            values.push(parseCellValue(raw));
+        } else if (seenValue) {
+            // Text appearing after values have started (rare — e.g. a wrapped
+            // heading that happens to contain an early number). Keep it as
+            // its own trailing cell rather than losing it.
+            values.push(raw);
+        } else {
+            label.push(raw);
         }
-        prev = x;
     });
-    bins.push({ start: binStart, end: prev });
-    return bins;
+
+    return [label.join(' '), ...values];
 }
 
 /**
- * Assign a row's text items into column bins, producing one cell string per bin
+ * Does this token look like a table value (a number, a "-" placeholder,
+ * or a number with a single stray leading letter from a font-encoding
+ * artifact — see parseCellValue)?
  */
-function assignToColumns(rowItems, bins) {
-    const cells = new Array(bins.length).fill('');
-
-    rowItems.forEach(item => {
-        let idx = bins.findIndex(b => item.x >= b.start - 6 && item.x <= b.end + 20);
-
-        if (idx === -1) {
-            let bestIdx = 0;
-            let bestDist = Infinity;
-            bins.forEach((b, i) => {
-                const center = (b.start + b.end) / 2;
-                const dist = Math.abs(item.x - center);
-                if (dist < bestDist) {
-                    bestDist = dist;
-                    bestIdx = i;
-                }
-            });
-            idx = bestIdx;
-        }
-
-        cells[idx] = (cells[idx] ? cells[idx] + ' ' : '') + item.str.trim();
-    });
-
-    return cells.map(parseCellValue);
+function isValueToken(raw) {
+    if (raw === '-') return true;
+    if (/^\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
+    if (/^[A-Za-z]\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
+    return false;
 }
 
 /**
@@ -459,7 +469,15 @@ function assignToColumns(rowItems, bins) {
  */
 function parseCellValue(str) {
     if (!str) return '';
-    const trimmed = str.trim();
+    let trimmed = str.trim();
+    if (trimmed === '-') return '-';
+
+    // Some GST portal PDFs embed a font that mis-maps the ₹ symbol to a
+    // stray Latin letter glued directly onto the number (e.g. "L955067.25").
+    // Strip a single leading letter immediately followed by a number.
+    const strayLetterMatch = trimmed.match(/^[A-Za-z](\(?-?[\d,]+(\.\d+)?\)?)$/);
+    if (strayLetterMatch) trimmed = strayLetterMatch[1];
+
     const looksNumeric = /^\(?-?[\d,]+(\.\d+)?\)?$/.test(trimmed);
 
     if (looksNumeric) {
