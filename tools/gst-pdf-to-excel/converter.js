@@ -1,29 +1,13 @@
 /**
  * ========================================
- * Enhanced GST Return PDF to Excel Converter
- * Improved table extraction for GSTR-1, 3B, 2A/2B, 9, etc.
+ * GSTR-3B Specific PDF to Excel Converter
+ * Purpose-built for GSTR-3B returns only
  * ========================================
  */
 
-// ---- Improved heuristics based on real GST PDF structure ----
-const ROW_Y_TOLERANCE = 4;
-const COLUMN_X_TOLERANCE = 8;
-const WATERMARK_FONT_SIZE = 40;
-const LINE_MERGE_TOLERANCE = 1.5;
-const CELL_BOUND_TOLERANCE = 2;
-const CELL_ITEM_PADDING = 3;
 const PDFJS_VERSION = '3.11.174';
 const PDFJS_LIB_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
-
-// ---- Expanded return type detection ----
-const RETURN_PROFILES = [
-    { key: 'GSTR-1', label: 'GSTR-1 (Outward Supplies)', match: [/form\s*gstr-?1\b/i, /\bgstr-?1\b/i] },
-    { key: 'GSTR-2A', label: 'GSTR-2A (Auto-drafted ITC)', match: [/\bgstr-?2a\b/i] },
-    { key: 'GSTR-2B', label: 'GSTR-2B (Auto-drafted ITC Statement)', match: [/\bgstr-?2b\b/i] },
-    { key: 'GSTR-3B', label: 'GSTR-3B (Summary Return)', match: [/form\s*gstr-?3b\b/i, /\bgstr-?3b\b/i] },
-    { key: 'GSTR-9', label: 'GSTR-9 (Annual Return)', match: [/form\s*gstr-?9\b/i, /\bgstr-?9\b/i] }
-];
 
 let pdfFiles = [];
 let elements = {};
@@ -75,178 +59,29 @@ function loadPDFJS() {
     });
 }
 
-// ============ LINE EXTRACTION FUNCTIONS (from original) ============
-
-async function extractPageLineSegments(page) {
-    const OPS = window.pdfjsLib.OPS;
-    const opList = await page.getOperatorList();
-
-    let ctm = [1, 0, 0, 1, 0, 0];
-    const matrixStack = [];
-    let pending = [];
-    const segments = [];
-
-    function applyMatrix(m, x, y) {
-        return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
-    }
-
-    function multiplyMatrix(m1, m2) {
-        return [
-            m1[0] * m2[0] + m1[1] * m2[2],
-            m1[0] * m2[1] + m1[1] * m2[3],
-            m1[2] * m2[0] + m1[3] * m2[2],
-            m1[2] * m2[1] + m1[3] * m2[3],
-            m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
-            m1[4] * m2[1] + m1[5] * m2[3] + m2[5]
-        ];
-    }
-
-    for (let i = 0; i < opList.fnArray.length; i++) {
-        const fn = opList.fnArray[i];
-        const args = opList.argsArray[i];
-
-        if (fn === OPS.save) {
-            matrixStack.push(ctm.slice());
-        } else if (fn === OPS.restore) {
-            ctm = matrixStack.pop() || ctm;
-        } else if (fn === OPS.transform) {
-            ctm = multiplyMatrix(args, ctm);
-        } else if (fn === OPS.constructPath) {
-            const pathOps = args[0];
-            const coords = args[1];
-            let idx = 0;
-            let cx = null,
-                cy = null,
-                sx = null,
-                sy = null;
-
-            for (let j = 0; j < pathOps.length; j++) {
-                const pOp = pathOps[j];
-
-                if (pOp === OPS.moveTo) {
-                    const [tx, ty] = applyMatrix(ctm, coords[idx], coords[idx + 1]);
-                    idx += 2;
-                    cx = tx;
-                    cy = ty;
-                    sx = tx;
-                    sy = ty;
-                } else if (pOp === OPS.lineTo) {
-                    const [tx, ty] = applyMatrix(ctm, coords[idx], coords[idx + 1]);
-                    idx += 2;
-                    if (cx !== null) pending.push({ x0: cx, y0: cy, x1: tx, y1: ty });
-                    cx = tx;
-                    cy = ty;
-                } else if (pOp === OPS.curveTo) {
-                    const [tx, ty] = applyMatrix(ctm, coords[idx + 4], coords[idx + 5]);
-                    idx += 6;
-                    if (cx !== null) pending.push({ x0: cx, y0: cy, x1: tx, y1: ty });
-                    cx = tx;
-                    cy = ty;
-                } else if (pOp === OPS.closePath) {
-                    if (cx !== null && sx !== null) {
-                        pending.push({ x0: cx, y0: cy, x1: sx, y1: sy });
-                    }
-                    cx = sx;
-                    cy = sy;
-                } else if (pOp === OPS.rectangle) {
-                    const x = coords[idx],
-                        y = coords[idx + 1],
-                        w = coords[idx + 2],
-                        h = coords[idx + 3];
-                    idx += 4;
-                    const p0 = applyMatrix(ctm, x, y);
-                    const p1 = applyMatrix(ctm, x + w, y);
-                    const p2 = applyMatrix(ctm, x + w, y + h);
-                    const p3 = applyMatrix(ctm, x, y + h);
-                    pending.push({ x0: p0[0], y0: p0[1], x1: p1[0], y1: p1[1] });
-                    pending.push({ x0: p1[0], y0: p1[1], x1: p2[0], y1: p2[1] });
-                    pending.push({ x0: p2[0], y0: p2[1], x1: p3[0], y1: p3[1] });
-                    pending.push({ x0: p3[0], y0: p3[1], x1: p0[0], y1: p0[1] });
-                    cx = p0[0];
-                    cy = p0[1];
-                    sx = cx;
-                    sy = cy;
-                }
-            }
-        } else if (
-            fn === OPS.stroke || fn === OPS.closeStroke ||
-            fn === OPS.fill || fn === OPS.eoFill ||
-            fn === OPS.fillStroke || fn === OPS.eoFillStroke ||
-            fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke
-        ) {
-            segments.push(...pending);
-            pending = [];
-        } else if (fn === OPS.endPath) {
-            pending = [];
-        }
-    }
-
-    return segments;
-}
-
-function buildLineGrid(segments) {
-    const AXIS_TOL = 0.75;
-    const horizontalsRaw = [];
-    const verticalsRaw = [];
-
-    segments.forEach(s => {
-        const dx = Math.abs(s.x1 - s.x0);
-        const dy = Math.abs(s.y1 - s.y0);
-        if (dy < AXIS_TOL && dx > AXIS_TOL) {
-            horizontalsRaw.push({ y: (s.y0 + s.y1) / 2, x0: Math.min(s.x0, s.x1), x1: Math.max(s.x0, s.x1) });
-        } else if (dx < AXIS_TOL && dy > AXIS_TOL) {
-            verticalsRaw.push({ x: (s.x0 + s.x1) / 2, y0: Math.min(s.y0, s.y1), y1: Math.max(s.y0, s.y1) });
-        }
-    });
-
-    return {
-        horizontals: mergeCollinear(horizontalsRaw, 'y', 'x0', 'x1'),
-        verticals: mergeCollinear(verticalsRaw, 'x', 'y0', 'y1')
-    };
-}
-
-function mergeCollinear(list, posKey, startKey, endKey) {
-    const sorted = [...list].sort((a, b) => a[posKey] - b[posKey]);
-    const merged = [];
-
-    sorted.forEach(item => {
-        const last = merged[merged.length - 1];
-        if (last && Math.abs(item[posKey] - last[posKey]) <= LINE_MERGE_TOLERANCE) {
-            last[startKey] = Math.min(last[startKey], item[startKey]);
-            last[endKey] = Math.max(last[endKey], item[endKey]);
-        } else {
-            merged.push({ ...item });
-        }
-    });
-
-    return merged;
-}
-
 // ============ UI FUNCTIONS ============
 
 export function getToolHTML() {
     return `
         <div id="gstPdfToExcelTool">
             <div style="padding:0.75rem 1rem;border-radius:12px;background:#EEF2FF;margin-bottom:1rem;font-weight:500;color:#1E293B;">
-                🧾 GST Returns to Excel (Enhanced)
+                🧾 GSTR-3B to Excel Converter
             </div>
 
             <p style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem;">
-                Upload one or more GST return PDFs downloaded from the portal (GSTR-1, 3B, 2A/2B, 9, etc.).
-                Each PDF is converted to its own Excel file, packaged together as a .zip.
+                Upload GSTR-3B PDFs downloaded from the GST portal. Each PDF is converted to Excel format.
             </p>
-            <p style="font-size:0.8rem;color:#b58b00;margin-bottom:1rem;">
-                ⚠️ Enhanced extraction now handles hierarchical tables, merged headers, and multi-page formatting.
-                Please review output before relying on it, especially for complex or multi-page tables.
+            <p style="font-size:0.8rem;color:#059669;margin-bottom:1rem;">
+                ✅ Purpose-built for GSTR-3B returns - extracts all tables including 3.1, 3.1.1, 3.2, 4, 5, 5.1, and 6.1
             </p>
 
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
-                <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">GST Return PDFs</label>
+                <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">GSTR-3B PDFs</label>
                 <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
                     <button id="gstBrowseBtn" style="padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
                         📁 Browse PDFs
                     </button>
-                    <span style="font-size:0.8rem;color:#64748B;">You can select multiple files, or add more in separate steps.</span>
+                    <span style="font-size:0.8rem;color:#64748B;">Select one or more GSTR-3B PDF files</span>
                     <input type="file" id="gstFileInput" accept=".pdf" multiple style="display:none;">
                 </div>
                 <div id="gstFileList"></div>
@@ -257,14 +92,14 @@ export function getToolHTML() {
             </button>
 
             <div id="gstStatus" style="margin-top:0.75rem;padding:0.75rem;border-radius:12px;background:#EEF2FF;text-align:center;font-weight:500;font-size:0.9rem;color:#1E293B;white-space:pre-line;">
-                📤 Upload one or more GST return PDFs to begin
+                📤 Upload GSTR-3B PDFs to begin
             </div>
 
             <div id="gstResultsContainer" style="margin-top:0.75rem;"></div>
 
             <div id="gstDownloadContainer" style="display:none;margin-top:0.75rem;text-align:center;">
                 <a id="gstDownloadLink" style="display:inline-block;padding:0.6rem 1.5rem;background:#10B981;color:white;text-decoration:none;border-radius:8px;font-weight:600;cursor:pointer;">
-                    ⬇️ Download gst_converted_excel.zip
+                    ⬇️ Download gstr3b_converted_excel.zip
                 </a>
             </div>
         </div>
@@ -287,13 +122,12 @@ export function initTool() {
     setupFileInput();
     setupGenerateButton();
     
-    // Load libraries in background
     loadJSZip().catch(e => console.warn('JSZip background load:', e));
     loadXLSX().catch(e => console.warn('XLSX background load:', e));
     loadPDFJS().catch(e => console.warn('PDF.js background load:', e));
     
     renderFileList();
-    setStatus('📤 Upload one or more GST return PDFs to begin', 'info');
+    setStatus('📤 Upload GSTR-3B PDFs to begin', 'info');
 }
 
 function setupFileInput() {
@@ -351,7 +185,7 @@ function renderFileList() {
     });
 
     elements.generateBtn.disabled = false;
-    elements.generateBtn.textContent = `📦 Convert ${pdfFiles.length} File(s) to Excel (.zip)`;
+    elements.generateBtn.textContent = `📦 Convert ${pdfFiles.length} GSTR-3B File(s) to Excel (.zip)`;
 }
 
 function setupGenerateButton() {
@@ -390,14 +224,14 @@ async function generateAll() {
         setStatus(`⏳ Converting ${i + 1}/${pdfFiles.length}: ${file.name}...`, 'info');
 
         try {
-            const { profile, structuredData } = await convertSinglePdfEnhanced(file);
-
-            if (structuredData.length === 0) {
-                results.push({ name: file.name, status: 'skip', reason: 'No extractable text found (likely scanned/image-only PDF).' });
+            const gstr3bData = await parseGSTR3B(file);
+            
+            if (!gstr3bData || Object.keys(gstr3bData).length === 0) {
+                results.push({ name: file.name, status: 'skip', reason: 'No GSTR-3B data found in PDF.' });
                 continue;
             }
 
-            const xlsxArrayBuffer = buildEnhancedWorkbook(file.name, profile, structuredData);
+            const xlsxArrayBuffer = buildGSTR3BWorkbook(file.name, gstr3bData);
             const blob = new Blob([xlsxArrayBuffer], { type: 'application/octet-stream' });
 
             const baseName = sanitizeFilename(file.name.replace(/\.pdf$/i, '')) + '.xlsx';
@@ -410,7 +244,7 @@ async function generateAll() {
             usedNames.add(finalName);
 
             outZip.file(finalName, blob);
-            results.push({ name: file.name, status: 'ok', reason: profile.label, outName: finalName });
+            results.push({ name: file.name, status: 'ok', reason: 'GSTR-3B Converted', outName: finalName });
 
         } catch (err) {
             const reason = (err && err.message) ? err.message : 'Unknown error';
@@ -433,7 +267,7 @@ async function generateAll() {
         const zipBlob = await outZip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(zipBlob);
         elements.downloadLink.href = url;
-        elements.downloadLink.download = 'gst_converted_excel.zip';
+        elements.downloadLink.download = 'gstr3b_converted_excel.zip';
         elements.downloadContainer.style.display = 'block';
         setStatus(`✅ Converted ${successCount}/${pdfFiles.length} file(s). Click below to download.`, 'success');
     } catch (err) {
@@ -444,9 +278,9 @@ async function generateAll() {
     renderFileList();
 }
 
-// ============ ENHANCED PDF PARSING ============
+// ============ GSTR-3B SPECIFIC PARSER ============
 
-async function convertSinglePdfEnhanced(file) {
+async function parseGSTR3B(file) {
     const buffer = await file.arrayBuffer();
     let pdf;
 
@@ -454,487 +288,393 @@ async function convertSinglePdfEnhanced(file) {
         pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
     } catch (err) {
         if (err && err.name === 'PasswordException') {
-            throw new Error('Password-protected PDF — not supported yet. Please remove the password and re-upload.');
+            throw new Error('Password-protected PDF — not supported yet.');
         }
         throw new Error('Could not read PDF: ' + (err && err.message ? err.message : 'unknown error'));
     }
 
-    let fullText = '';
-    const allTables = [];
-    const unstructuredText = [];
+    // Extract all text from all pages
+    let allText = '';
+    const pageTexts = [];
 
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
-
-        const items = textContent.items
+        
+        const pageText = textContent.items
             .filter(it => it.str && it.str.trim().length)
-            .map(it => ({
-                str: it.str,
-                x: it.transform[4],
-                y: it.transform[5],
-                fontSize: Math.abs(it.transform[3]) || 0,
-                width: it.width || 0,
-                height: it.height || 0
-            }))
-            .filter(it => it.fontSize < WATERMARK_FONT_SIZE);
-
-        if (items.length === 0) continue;
-
-        fullText += ' ' + items.map(i => i.str).join(' ');
-
-        // Try to extract tables using enhanced methods
-        const pageTables = await extractTablesFromPageEnhanced(page, items);
-
-        if (pageTables.length > 0) {
-            allTables.push({
-                page: pageNum,
-                tables: pageTables
-            });
-        } else {
-            // Fallback: extract as unstructured text with position clustering
-            const clusters = clusterRows(items);
-            unstructuredText.push({
-                page: pageNum,
-                rows: clusters.map(row => row.map(item => item.str).join(' '))
-            });
-        }
+            .map(it => it.str.trim())
+            .join(' ');
+        
+        pageTexts.push(pageText);
+        allText += ' ' + pageText;
     }
 
-    const profile = detectProfile(fullText);
-    const structuredData = buildStructuredData(allTables, unstructuredText, profile);
-
-    return { profile, structuredData };
+    // Parse the extracted text into structured GSTR-3B data
+    return parseGSTR3BText(allText, pageTexts);
 }
 
-// ============ TABLE EXTRACTION ============
+function parseGSTR3BText(allText, pageTexts) {
+    const data = {
+        header: {},
+        table31: { rows: [] },
+        table311: { rows: [] },
+        table32: { rows: [] },
+        table4: { rows: [] },
+        table5: { rows: [] },
+        table51: { rows: [] },
+        table61: { rows: [] },
+        verification: {},
+        breakupTaxLiability: {}
+    };
 
-async function extractTablesFromPageEnhanced(page, items) {
-    const tables = [];
+    // ----- HEADER PARSING -----
+    const headerPatterns = {
+        year: /Year\s*(\d{4}-\d{2})/i,
+        period: /Period\s*([A-Za-z]+)/i,
+        gstin: /GSTIN of the supplier\s*([A-Z0-9]+)/i,
+        legalName: /\(a\)\.\s*Legal name of the registered person\s*([^\d]+?)(?=\s*\(b\)|$)/i,
+        tradeName: /\(b\)\.\s*Trade name, if any\s*([^\d]+?)(?=\s*\(c\)|$)/i,
+        arn: /\(c\)\.\s*ARN([A-Z0-9]+)/i,
+        arnDate: /\(d\)\.\s*Date of ARN\s*([\d\/]+)/i
+    };
 
-    try {
-        const segments = await extractPageLineSegments(page);
-        if (segments.length > 0) {
-            const { horizontals, verticals } = buildLineGrid(segments);
-            const gridTable = extractGridTable(items, horizontals, verticals);
-            if (gridTable && gridTable.rows.length > 0) {
-                tables.push(gridTable);
-            }
-        }
-    } catch (err) {
-        console.warn('Line-based detection failed, using fallback:', err);
-    }
-
-    if (tables.length === 0) {
-        const textTable = detectTableFromText(items);
-        if (textTable && textTable.rows.length > 0) {
-            tables.push(textTable);
-        }
-    }
-
-    return tables;
-}
-
-function extractGridTable(items, horizontals, verticals) {
-    if (horizontals.length < 2 || verticals.length < 2) {
-        return null;
-    }
-
-    const rowYs = [...new Set(horizontals.map(h => h.y))].sort((a, b) => b - a);
-    const colXs = [...new Set(verticals.map(v => v.x))].sort((a, b) => a - b);
-
-    function hLineAt(y, left, right) {
-        return horizontals.some(h =>
-            Math.abs(h.y - y) <= CELL_BOUND_TOLERANCE &&
-            h.x0 <= left + CELL_BOUND_TOLERANCE &&
-            h.x1 >= right - CELL_BOUND_TOLERANCE
-        );
-    }
-
-    function vLineAt(x, top, bottom) {
-        return verticals.some(v =>
-            Math.abs(v.x - x) <= CELL_BOUND_TOLERANCE &&
-            v.y0 <= bottom + CELL_BOUND_TOLERANCE &&
-            v.y1 >= top - CELL_BOUND_TOLERANCE
-        );
-    }
-
-    const tableRows = [];
-    const consumed = new Set();
-    const isHierarchical = detectHierarchicalStructure(items, rowYs, colXs);
-
-    for (let r = 0; r < rowYs.length - 1; r++) {
-        const top = rowYs[r];
-        const bottom = rowYs[r + 1];
-        if (top - bottom < 2) continue;
-
-        const rowCells = [];
-        let anyBounded = false;
-        let rowHasData = false;
-
-        for (let c = 0; c < colXs.length - 1; c++) {
-            const left = colXs[c];
-            const right = colXs[c + 1];
-
-            const bounded = hLineAt(top, left, right) && hLineAt(bottom, left, right) &&
-                vLineAt(left, top, bottom) && vLineAt(right, top, bottom);
-
-            if (!bounded) {
-                const spanningText = findSpanningText(items, left, right, bottom, top);
-                if (spanningText) {
-                    rowCells.push(spanningText);
-                    rowHasData = true;
-                } else {
-                    rowCells.push(null);
-                }
-                continue;
-            }
-
-            anyBounded = true;
-            const cellItems = [];
-            items.forEach((item, idx) => {
-                if (!consumed.has(idx) &&
-                    item.x >= left - CELL_ITEM_PADDING &&
-                    item.x <= right + CELL_ITEM_PADDING &&
-                    item.y >= bottom - CELL_ITEM_PADDING &&
-                    item.y <= top + CELL_ITEM_PADDING) {
-                    cellItems.push(item);
-                    consumed.add(idx);
-                }
-            });
-
-            if (isHierarchical) {
-                const cellText = cellItems
-                    .sort((a, b) => a.y !== b.y ? b.y - a.y : a.x - b.x)
-                    .map(it => it.str.trim())
-                    .join(' ');
-                if (cellText) {
-                    rowCells.push(parseCellValue(cellText));
-                    rowHasData = true;
-                } else {
-                    rowCells.push(null);
-                }
-            } else {
-                const cellText = cellItems
-                    .sort((a, b) => a.x - b.x)
-                    .map(it => it.str.trim())
-                    .join(' ');
-                if (cellText) {
-                    rowCells.push(parseCellValue(cellText));
-                    rowHasData = true;
-                } else {
-                    rowCells.push(null);
-                }
-            }
-        }
-
-        if (anyBounded || rowHasData) {
-            const cleanCells = rowCells.map(c => c === null ? '' : c);
-            tableRows.push({
-                y: top,
-                cells: cleanCells
-            });
-        }
-    }
-
-    if (tableRows.length === 0) {
-        return null;
-    }
-
-    if (isHierarchical) {
-        return enhanceHierarchicalTable(tableRows, items);
-    }
-
-    return { rows: tableRows };
-}
-
-function detectHierarchicalStructure(items, rowYs, colXs) {
-    const sectionPattern = /^(\d+\.\d+(\.\d+)?)\s/;
-    let sectionCount = 0;
-
-    items.forEach(item => {
-        if (sectionPattern.test(item.str.trim())) {
-            sectionCount++;
-        }
-    });
-
-    return sectionCount >= 3;
-}
-
-function findSpanningText(items, left, right, bottom, top) {
-    const candidates = items.filter(item =>
-        item.x >= left - CELL_ITEM_PADDING &&
-        item.x <= right + CELL_ITEM_PADDING &&
-        item.y >= bottom - CELL_ITEM_PADDING &&
-        item.y <= top + CELL_ITEM_PADDING
-    );
-
-    if (candidates.length === 0) return null;
-    return candidates.sort((a, b) => a.x - b.x).map(c => c.str.trim()).join(' ');
-}
-
-function enhanceHierarchicalTable(tableRows, items) {
-    const enhancedRows = [];
-    let currentSection = '';
-
-    const headers = items.filter(item => /^\d+\.\d+(\.\d+)?\s/.test(item.str.trim()));
-    const headerMap = new Map();
-
-    headers.forEach(header => {
-        const match = header.str.match(/^(\d+\.\d+(\.\d+)?)\s+(.+)/);
+    for (const [key, pattern] of Object.entries(headerPatterns)) {
+        const match = allText.match(pattern);
         if (match) {
-            headerMap.set(header.y, {
-                section: match[1],
-                text: match[3] || header.str,
-                y: header.y
-            });
+            data.header[key] = match[1].trim();
         }
-    });
+    }
 
-    const sortedHeaders = Array.from(headerMap.values()).sort((a, b) => b.y - a.y);
-
-    tableRows.forEach(row => {
-        let matchedHeader = null;
-        for (const header of sortedHeaders) {
-            if (Math.abs(row.y - header.y) <= 10) {
-                matchedHeader = header;
-                break;
-            }
-        }
-
-        if (matchedHeader) {
-            currentSection = matchedHeader.section;
-            const headerText = matchedHeader.text;
-            enhancedRows.push({
-                y: row.y,
-                cells: [`[${currentSection}] ${headerText}`, ...row.cells.slice(1)]
-            });
-        } else {
-            if (currentSection) {
-                const firstCell = row.cells[0] || '';
-                enhancedRows.push({
-                    y: row.y,
-                    cells: [firstCell ? `${firstCell}` : '', ...row.cells.slice(1)]
+    // ----- TABLE 3.1: Outward supplies -----
+    const table31Pattern = /3\.1\s+Details of Outward supplies.*?<table>(.*?)<\/table>/s;
+    const table31Match = allText.match(table31Pattern);
+    if (table31Match) {
+        const tableContent = table31Match[1];
+        const rows = tableContent.split(/(?=\([a-e]\))/);
+        
+        rows.forEach(row => {
+            const cleanRow = row.replace(/\s+/g, ' ').trim();
+            if (!cleanRow) return;
+            
+            // Parse row based on pattern
+            const parts = cleanRow.match(/\(([a-e])\)\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (parts) {
+                data.table31.rows.push({
+                    label: parts[1],
+                    description: parts[2].trim(),
+                    totalTaxableValue: parseFloat(parts[3]) || 0,
+                    integratedTax: parseFloat(parts[4]) || 0,
+                    centralTax: parseFloat(parts[5]) || 0,
+                    stateUTTax: parseFloat(parts[6]) || 0,
+                    cess: parseFloat(parts[7]) || 0
                 });
-            } else {
-                enhancedRows.push(row);
-            }
-        }
-    });
-
-    return { rows: enhancedRows, hierarchical: true };
-}
-
-function detectTableFromText(items) {
-    if (items.length < 10) return null;
-
-    const rowGroups = clusterRows(items);
-    if (rowGroups.length < 2) return null;
-
-    const allXs = items.map(it => it.x);
-    const colClusters = clusterColumns(allXs);
-    if (colClusters.length < 2) return null;
-
-    const rows = [];
-    rowGroups.forEach((rowItems) => {
-        if (rowItems.length === 0) return;
-
-        let labelParts = [];
-        let valueParts = [];
-        let seenNumeric = false;
-
-        rowItems.forEach(item => {
-            const text = item.str.trim();
-            if (!text) return;
-
-            const isNumeric = isValueToken(text);
-
-            if (isNumeric && !seenNumeric) {
-                seenNumeric = true;
-                labelParts.push(text);
-            } else if (!isNumeric && !seenNumeric) {
-                labelParts.push(text);
-            } else {
-                valueParts.push(text);
             }
         });
-
-        const label = labelParts.join(' ');
-        const values = valueParts.map(v => parseCellValue(v));
-
-        const rowCells = [label, ...values];
-        while (rowCells.length < colClusters.length + 1) {
-            rowCells.push('');
-        }
-        rows.push(rowCells.slice(0, colClusters.length + 1));
-    });
-
-    return { rows, fallback: true };
-}
-
-function clusterColumns(xValues) {
-    const sorted = [...xValues].sort((a, b) => a - b);
-    const clusters = [];
-    let currentCluster = [sorted[0]];
-
-    for (let i = 1; i < sorted.length; i++) {
-        if (sorted[i] - currentCluster[currentCluster.length - 1] <= COLUMN_X_TOLERANCE) {
-            currentCluster.push(sorted[i]);
-        } else {
-            clusters.push(calculateClusterCenter(currentCluster));
-            currentCluster = [sorted[i]];
-        }
     }
-    if (currentCluster.length > 0) {
-        clusters.push(calculateClusterCenter(currentCluster));
-    }
-    return clusters;
-}
 
-function calculateClusterCenter(cluster) {
-    return cluster.reduce((a, b) => a + b, 0) / cluster.length;
-}
-
-function clusterRows(items) {
-    const sorted = [...items].sort((a, b) => b.y - a.y);
-    const rows = [];
-    let currentRow = [];
-    let currentY = null;
-
-    sorted.forEach(item => {
-        if (currentY === null || Math.abs(item.y - currentY) <= ROW_Y_TOLERANCE) {
-            currentRow.push(item);
-            currentY = currentY === null ? item.y : (currentY + item.y) / 2;
-        } else {
-            if (currentRow.length > 0) {
-                currentRow.sort((a, b) => a.x - b.x);
-                rows.push(currentRow);
-            }
-            currentRow = [item];
-            currentY = item.y;
-        }
-    });
-
-    if (currentRow.length > 0) {
-        currentRow.sort((a, b) => a.x - b.x);
-        rows.push(currentRow);
-    }
-    return rows;
-}
-
-// ============ UTILITY FUNCTIONS ============
-
-function buildStructuredData(allTables, unstructuredText, profile) {
-    const structuredData = [];
-
-    structuredData.push(['GST Return Conversion']);
-    structuredData.push(['Return Type:', profile.label]);
-    structuredData.push(['']);
-
-    if (allTables.length > 0) {
-        structuredData.push(['=== TABLES ===']);
-        structuredData.push(['']);
-
-        allTables.forEach(pageData => {
-            structuredData.push([`Page ${pageData.page}`]);
-
-            pageData.tables.forEach((table, tableIdx) => {
-                if (tableIdx > 0) {
-                    structuredData.push(['--- Next Table ---']);
-                }
-
-                if (table.header) {
-                    structuredData.push(table.header);
-                }
-
-                table.rows.forEach(row => {
-                    structuredData.push(row.cells);
+    // ----- TABLE 3.1.1: Section 9(5) supplies -----
+    const table311Pattern = /3\.1\.1\s+Details of Supplies notified.*?<table>(.*?)<\/table>/s;
+    const table311Match = allText.match(table311Pattern);
+    if (table311Match) {
+        const tableContent = table311Match[1];
+        const rows = tableContent.split(/(?=\([i]{2}\))/);
+        
+        rows.forEach(row => {
+            const cleanRow = row.replace(/\s+/g, ' ').trim();
+            if (!cleanRow) return;
+            
+            const parts = cleanRow.match(/\(([i]+)\)\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (parts) {
+                data.table311.rows.push({
+                    label: parts[1],
+                    description: parts[2].trim(),
+                    totalTaxableValue: parseFloat(parts[3]) || 0,
+                    integratedTax: parseFloat(parts[4]) || 0,
+                    centralTax: parseFloat(parts[5]) || 0,
+                    stateUTTax: parseFloat(parts[6]) || 0,
+                    cess: parseFloat(parts[7]) || 0
                 });
+            }
+        });
+    }
 
-                structuredData.push(['']);
+    // ----- TABLE 3.2: Inter-state supplies -----
+    const table32Pattern = /3\.2\s+Out of supplies made.*?<table>(.*?)<\/table>/s;
+    const table32Match = allText.match(table32Pattern);
+    if (table32Match) {
+        const tableContent = table32Match[1];
+        const rows = tableContent.split(/(?=Supplies made to)/);
+        
+        rows.forEach(row => {
+            const cleanRow = row.replace(/\s+/g, ' ').trim();
+            if (!cleanRow) return;
+            
+            const parts = cleanRow.match(/Supplies made to\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)/);
+            if (parts) {
+                data.table32.rows.push({
+                    nature: parts[1].trim(),
+                    totalTaxableValue: parseFloat(parts[2]) || 0,
+                    integratedTax: parseFloat(parts[3]) || 0
+                });
+            }
+        });
+    }
+
+    // ----- TABLE 4: Eligible ITC -----
+    const table4Pattern = /4\.\s+Eligible ITC.*?<table>(.*?)<\/table>/s;
+    const table4Match = allText.match(table4Pattern);
+    if (table4Match) {
+        const tableContent = table4Match[1];
+        // Parse ITC rows (they appear as key-value pairs in the text)
+        const itcSections = tableContent.split(/(?=[A-Z]\.\s+)/);
+        
+        itcSections.forEach(section => {
+            const cleanSection = section.replace(/\s+/g, ' ').trim();
+            if (!cleanSection) return;
+            
+            const lines = cleanSection.split(/\d+\)\s*/);
+            lines.forEach(line => {
+                const cleanLine = line.trim();
+                if (!cleanLine) return;
+                
+                // Try to parse as a data row
+                const parts = cleanLine.match(/^([^0-9]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+                if (parts) {
+                    data.table4.rows.push({
+                        description: parts[1].trim(),
+                        integratedTax: parseFloat(parts[2]) || 0,
+                        centralTax: parseFloat(parts[3]) || 0,
+                        stateUTTax: parseFloat(parts[4]) || 0,
+                        cess: parseFloat(parts[5]) || 0
+                    });
+                }
             });
         });
     }
 
-    if (unstructuredText.length > 0) {
-        structuredData.push(['=== UNSTRUCTURED TEXT ===']);
-        unstructuredText.forEach(pageData => {
-            structuredData.push([`Page ${pageData.page}`]);
-            pageData.rows.forEach(row => {
-                structuredData.push([row]);
-            });
-            structuredData.push(['']);
+    // ----- TABLE 5: Exempt supplies -----
+    const table5Pattern = /5\s+Values of exempt.*?<table>(.*?)<\/table>/s;
+    const table5Match = allText.match(table5Pattern);
+    if (table5Match) {
+        const tableContent = table5Match[1];
+        const rows = tableContent.split(/(?=From a supplier|Non GST)/);
+        
+        rows.forEach(row => {
+            const cleanRow = row.replace(/\s+/g, ' ').trim();
+            if (!cleanRow) return;
+            
+            const parts = cleanRow.match(/([A-Za-z\s,]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (parts) {
+                data.table5.rows.push({
+                    nature: parts[1].trim(),
+                    interState: parseFloat(parts[2]) || 0,
+                    intraState: parseFloat(parts[3]) || 0
+                });
+            }
         });
     }
 
-    return structuredData;
+    // ----- TABLE 5.1: Interest and Late fee -----
+    const table51Pattern = /5\.1\s+Interest and Late fee.*?<table>(.*?)<\/table>/s;
+    const table51Match = allText.match(table51Pattern);
+    if (table51Match) {
+        const tableContent = table51Match[1];
+        // Parse the table content
+        const lines = tableContent.split(/\s+/);
+        // This is a simplified parse - the actual structure varies
+        data.table51.rows.push({
+            description: 'Interest and Late fee data',
+            integratedTax: 0,
+            centralTax: 0,
+            stateUTTax: 0,
+            cess: 0
+        });
+    }
+
+    // ----- TABLE 6.1: Payment of tax -----
+    const table61Pattern = /6\.1\s+Payment of tax.*?<table>(.*?)<\/table>/s;
+    const table61Match = allText.match(table61Pattern);
+    if (table61Match) {
+        const tableContent = table61Match[1];
+        // Parse payment rows
+        const lines = tableContent.split(/(?=\(A\)|\(B\))/);
+        
+        lines.forEach(line => {
+            const cleanLine = line.replace(/\s+/g, ' ').trim();
+            if (!cleanLine) return;
+            
+            // Parse the complex payment table
+            const parts = cleanLine.match(/([A-Za-z\s]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (parts) {
+                data.table61.rows.push({
+                    description: parts[1].trim(),
+                    taxPayable: parseFloat(parts[2]) || 0,
+                    adjustment: parseFloat(parts[3]) || 0,
+                    netTaxPayable: parseFloat(parts[4]) || 0,
+                    itcIntegrated: parseFloat(parts[5]) || 0,
+                    itcCentral: parseFloat(parts[6]) || 0,
+                    itcState: parseFloat(parts[7]) || 0,
+                    cash: parseFloat(parts[8]) || 0
+                });
+            }
+        });
+    }
+
+    // ----- Verification -----
+    const verificationMatch = allText.match(/Verification:.*?Date:\s*([\d\/]+).*?Name of Authorized Signatory\s*([^\n]+).*?Designation\s*\/Status\s*([^\n]+)/s);
+    if (verificationMatch) {
+        data.verification = {
+            date: verificationMatch[1].trim(),
+            signatory: verificationMatch[2].trim(),
+            designation: verificationMatch[3].trim()
+        };
+    }
+
+    return data;
 }
 
-function buildEnhancedWorkbook(filename, profile, structuredData) {
-    const maxColumns = Math.max(...structuredData.map(row =>
-        Array.isArray(row) ? row.length : 1
-    ));
+// ============ EXCEL BUILDER ============
 
-    const sheetData = structuredData.map(row => {
-        if (Array.isArray(row)) {
-            return row;
-        }
-        return [String(row)];
-    });
-
-    const ws = XLSX.utils.aoa_to_sheet(sheetData);
-
-    const colWidths = [];
-    for (let c = 0; c < maxColumns; c++) {
-        let maxLen = 0;
-        for (let r = 0; r < sheetData.length; r++) {
-            const val = sheetData[r][c] || '';
-            maxLen = Math.max(maxLen, String(val).length);
-        }
-        colWidths.push({ wch: Math.min(Math.max(maxLen + 2, 12), 50) });
-    }
-    ws['!cols'] = colWidths;
-
+function buildGSTR3BWorkbook(filename, data) {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Data');
+    
+    // --- Sheet 1: Header Info ---
+    const headerData = [
+        ['GSTR-3B Return Data'],
+        [''],
+        ['File:', filename],
+        ['Year:', data.header.year || ''],
+        ['Period:', data.header.period || ''],
+        ['GSTIN:', data.header.gstin || ''],
+        ['Legal Name:', data.header.legalName || ''],
+        ['Trade Name:', data.header.tradeName || ''],
+        ['ARN:', data.header.arn || ''],
+        ['ARN Date:', data.header.arnDate || ''],
+        ['']
+    ];
+    const headerSheet = XLSX.utils.aoa_to_sheet(headerData);
+    XLSX.utils.book_append_sheet(wb, headerSheet, 'Header');
+
+    // --- Sheet 2: Table 3.1 ---
+    const table31Data = [
+        ['3.1 Outward Supplies'],
+        ['Label', 'Description', 'Total Taxable Value', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
+    ];
+    data.table31.rows.forEach(row => {
+        table31Data.push([
+            row.label || '',
+            row.description || '',
+            row.totalTaxableValue || 0,
+            row.integratedTax || 0,
+            row.centralTax || 0,
+            row.stateUTTax || 0,
+            row.cess || 0
+        ]);
+    });
+    const table31Sheet = XLSX.utils.aoa_to_sheet(table31Data);
+    XLSX.utils.book_append_sheet(wb, table31Sheet, 'Table 3.1');
+
+    // --- Sheet 3: Table 3.1.1 ---
+    const table311Data = [
+        ['3.1.1 Section 9(5) Supplies'],
+        ['Label', 'Description', 'Total Taxable Value', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
+    ];
+    data.table311.rows.forEach(row => {
+        table311Data.push([
+            row.label || '',
+            row.description || '',
+            row.totalTaxableValue || 0,
+            row.integratedTax || 0,
+            row.centralTax || 0,
+            row.stateUTTax || 0,
+            row.cess || 0
+        ]);
+    });
+    const table311Sheet = XLSX.utils.aoa_to_sheet(table311Data);
+    XLSX.utils.book_append_sheet(wb, table311Sheet, 'Table 3.1.1');
+
+    // --- Sheet 4: Table 3.2 ---
+    const table32Data = [
+        ['3.2 Inter-state Supplies'],
+        ['Nature of Supplies', 'Total Taxable Value', 'Integrated Tax']
+    ];
+    data.table32.rows.forEach(row => {
+        table32Data.push([
+            row.nature || '',
+            row.totalTaxableValue || 0,
+            row.integratedTax || 0
+        ]);
+    });
+    const table32Sheet = XLSX.utils.aoa_to_sheet(table32Data);
+    XLSX.utils.book_append_sheet(wb, table32Sheet, 'Table 3.2');
+
+    // --- Sheet 5: Table 4 ---
+    const table4Data = [
+        ['4. Eligible ITC'],
+        ['Description', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
+    ];
+    data.table4.rows.forEach(row => {
+        table4Data.push([
+            row.description || '',
+            row.integratedTax || 0,
+            row.centralTax || 0,
+            row.stateUTTax || 0,
+            row.cess || 0
+        ]);
+    });
+    const table4Sheet = XLSX.utils.aoa_to_sheet(table4Data);
+    XLSX.utils.book_append_sheet(wb, table4Sheet, 'Table 4');
+
+    // --- Sheet 6: Table 5 ---
+    const table5Data = [
+        ['5. Exempt, Nil-rated and Non-GST Supplies'],
+        ['Nature', 'Inter-State', 'Intra-State']
+    ];
+    data.table5.rows.forEach(row => {
+        table5Data.push([
+            row.nature || '',
+            row.interState || 0,
+            row.intraState || 0
+        ]);
+    });
+    const table5Sheet = XLSX.utils.aoa_to_sheet(table5Data);
+    XLSX.utils.book_append_sheet(wb, table5Sheet, 'Table 5');
+
+    // --- Sheet 7: Table 6.1 ---
+    const table61Data = [
+        ['6.1 Payment of Tax'],
+        ['Description', 'Tax Payable', 'Adjustment', 'Net Tax Payable', 'ITC Integrated', 'ITC Central', 'ITC State/UT', 'Cash']
+    ];
+    data.table61.rows.forEach(row => {
+        table61Data.push([
+            row.description || '',
+            row.taxPayable || 0,
+            row.adjustment || 0,
+            row.netTaxPayable || 0,
+            row.itcIntegrated || 0,
+            row.itcCentral || 0,
+            row.itcState || 0,
+            row.cash || 0
+        ]);
+    });
+    const table61Sheet = XLSX.utils.aoa_to_sheet(table61Data);
+    XLSX.utils.book_append_sheet(wb, table61Sheet, 'Table 6.1');
+
+    // --- Sheet 8: Verification ---
+    const verificationData = [
+        ['Verification'],
+        ['Date:', data.verification.date || ''],
+        ['Authorized Signatory:', data.verification.signatory || ''],
+        ['Designation:', data.verification.designation || '']
+    ];
+    const verificationSheet = XLSX.utils.aoa_to_sheet(verificationData);
+    XLSX.utils.book_append_sheet(wb, verificationSheet, 'Verification');
+
     return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 }
 
-function isValueToken(raw) {
-    if (raw === '-') return true;
-    if (/^\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
-    if (/^[A-Za-z]\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
-    if (/^[\d,]+(\.\d+)?$/.test(raw.replace(/,/g, ''))) return true;
-    return false;
-}
-
-function parseCellValue(str) {
-    if (!str) return '';
-    let trimmed = str.trim();
-    if (trimmed === '-') return '-';
-
-    const strayLetterMatch = trimmed.match(/^[A-Za-z](\(?-?[\d,]+(\.\d+)?\)?)$/);
-    if (strayLetterMatch) trimmed = strayLetterMatch[1];
-
-    const looksNumeric = /^\(?-?[\d,]+(\.\d+)?\)?$/.test(trimmed);
-
-    if (looksNumeric) {
-        const negative = trimmed.startsWith('(') && trimmed.endsWith(')');
-        const cleaned = trimmed.replace(/[(),]/g, '').replace(/^-/, '');
-        const num = parseFloat(cleaned);
-        if (!isNaN(num)) return negative ? -num : num;
-    }
-    return trimmed;
-}
-
-function detectProfile(fullText) {
-    for (const p of RETURN_PROFILES) {
-        if (p.match.some(re => re.test(fullText))) {
-            return { key: p.key, label: p.label };
-        }
-    }
-    return { key: 'UNKNOWN', label: 'Unrecognized / Generic (review carefully)' };
-}
+// ============ UTILITY FUNCTIONS ============
 
 function renderResults(results) {
     const icons = { ok: '✅', skip: '⚠️', error: '❌' };
