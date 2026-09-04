@@ -1,7 +1,7 @@
 /**
  * ========================================
  * GSTR-3B Specific PDF to Excel Converter
- * Purpose-built for GSTR-3B returns only
+ * All tables in a single sheet, stacked vertically
  * ========================================
  */
 
@@ -72,7 +72,7 @@ export function getToolHTML() {
                 Upload GSTR-3B PDFs downloaded from the GST portal. Each PDF is converted to Excel format.
             </p>
             <p style="font-size:0.8rem;color:#059669;margin-bottom:1rem;">
-                ✅ Purpose-built for GSTR-3B returns - extracts all tables including 3.1, 3.1.1, 3.2, 4, 5, 5.1, and 6.1
+                ✅ Purpose-built for GSTR-3B returns - extracts all tables into a single sheet
             </p>
 
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
@@ -224,14 +224,14 @@ async function generateAll() {
         setStatus(`⏳ Converting ${i + 1}/${pdfFiles.length}: ${file.name}...`, 'info');
 
         try {
-            const gstr3bData = await parseGSTR3B(file);
+            const extractedData = await extractGSTR3BData(file);
             
-            if (!gstr3bData || Object.keys(gstr3bData).length === 0) {
+            if (!extractedData || extractedData.length === 0) {
                 results.push({ name: file.name, status: 'skip', reason: 'No GSTR-3B data found in PDF.' });
                 continue;
             }
 
-            const xlsxArrayBuffer = buildGSTR3BWorkbook(file.name, gstr3bData);
+            const xlsxArrayBuffer = buildSingleSheetWorkbook(file.name, extractedData);
             const blob = new Blob([xlsxArrayBuffer], { type: 'application/octet-stream' });
 
             const baseName = sanitizeFilename(file.name.replace(/\.pdf$/i, '')) + '.xlsx';
@@ -278,9 +278,9 @@ async function generateAll() {
     renderFileList();
 }
 
-// ============ GSTR-3B SPECIFIC PARSER ============
+// ============ GSTR-3B DATA EXTRACTION ============
 
-async function parseGSTR3B(file) {
+async function extractGSTR3BData(file) {
     const buffer = await file.arrayBuffer();
     let pdf;
 
@@ -293,8 +293,8 @@ async function parseGSTR3B(file) {
         throw new Error('Could not read PDF: ' + (err && err.message ? err.message : 'unknown error'));
     }
 
-    // Extract all text from all pages
-    let allText = '';
+    // Extract ALL text from ALL pages as a single string
+    let fullText = '';
     const pageTexts = [];
 
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -307,370 +307,268 @@ async function parseGSTR3B(file) {
             .join(' ');
         
         pageTexts.push(pageText);
-        allText += ' ' + pageText;
+        fullText += ' ' + pageText;
     }
 
-    // Parse the extracted text into structured GSTR-3B data
-    return parseGSTR3BText(allText, pageTexts);
+    // Parse the full text
+    return parseGSTR3BFullText(fullText);
 }
 
-function parseGSTR3BText(allText, pageTexts) {
-    const data = {
-        header: {},
-        table31: { rows: [] },
-        table311: { rows: [] },
-        table32: { rows: [] },
-        table4: { rows: [] },
-        table5: { rows: [] },
-        table51: { rows: [] },
-        table61: { rows: [] },
-        verification: {},
-        breakupTaxLiability: {}
-    };
+function parseGSTR3BFullText(text) {
+    const rows = [];
+    let currentSection = '';
+    let rowIndex = 0;
 
-    // ----- HEADER PARSING -----
-    const headerPatterns = {
-        year: /Year\s*(\d{4}-\d{2})/i,
-        period: /Period\s*([A-Za-z]+)/i,
-        gstin: /GSTIN of the supplier\s*([A-Z0-9]+)/i,
-        legalName: /\(a\)\.\s*Legal name of the registered person\s*([^\d]+?)(?=\s*\(b\)|$)/i,
-        tradeName: /\(b\)\.\s*Trade name, if any\s*([^\d]+?)(?=\s*\(c\)|$)/i,
-        arn: /\(c\)\.\s*ARN([A-Z0-9]+)/i,
-        arnDate: /\(d\)\.\s*Date of ARN\s*([\d\/]+)/i
-    };
+    // Split by newlines or table markers
+    const lines = text.split(/\s+(?=<table>|<\/table>|(?=\d+\.\d+))/);
+    
+    // Process each line
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i].trim();
+        if (!line) continue;
 
-    for (const [key, pattern] of Object.entries(headerPatterns)) {
-        const match = allText.match(pattern);
-        if (match) {
-            data.header[key] = match[1].trim();
+        // Clean up the line - remove table tags and extra spaces
+        line = line.replace(/<table>|<\/table>/g, '').replace(/\s+/g, ' ').trim();
+        if (!line) continue;
+
+        // Check if this is a section header
+        const sectionMatch = line.match(/^(\d+(\.\d+)?)\s+(.+)/);
+        if (sectionMatch) {
+            currentSection = sectionMatch[1] + ' ' + sectionMatch[3];
+            rows.push([currentSection]);
+            rows.push([]); // Empty row for spacing
+            rowIndex = rows.length;
+            continue;
+        }
+
+        // Check for header patterns (GSTR-3B specific)
+        if (line.includes('GSTIN of the supplier')) {
+            const gstinMatch = line.match(/GSTIN of the supplier\s*([A-Z0-9]+)/);
+            if (gstinMatch) {
+                rows.push(['GSTIN:', gstinMatch[1]]);
+            }
+            continue;
+        }
+
+        if (line.includes('Legal name of the registered person')) {
+            const nameMatch = line.match(/Legal name of the registered person\s*(.+?)(?=\s*\(b\)|$)/);
+            if (nameMatch) {
+                rows.push(['Legal Name:', nameMatch[1]]);
+            }
+            continue;
+        }
+
+        if (line.includes('Date of ARN')) {
+            const dateMatch = line.match(/Date of ARN\s*([\d\/]+)/);
+            if (dateMatch) {
+                rows.push(['ARN Date:', dateMatch[1]]);
+            }
+            continue;
+        }
+
+        // Parse Table 3.1 rows - pattern: (a) Description 12345.00 12345.00 12345.00 12345.00 12345.00
+        const table31Match = line.match(/\(([a-e])\)\s+([A-Za-z\s,()]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (table31Match) {
+            rows.push([
+                '3.1.' + table31Match[1],
+                table31Match[2].trim(),
+                parseFloat(table31Match[3]) || 0,
+                parseFloat(table31Match[4]) || 0,
+                parseFloat(table31Match[5]) || 0,
+                parseFloat(table31Match[6]) || 0,
+                parseFloat(table31Match[7]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Table 3.1.1 rows - pattern: (i) Description 12345.00 12345.00 12345.00 12345.00 12345.00
+        const table311Match = line.match(/\(([i]+)\)\s+([A-Za-z\s,()\[\]]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (table311Match) {
+            rows.push([
+                '3.1.1.' + table311Match[1],
+                table311Match[2].trim(),
+                parseFloat(table311Match[3]) || 0,
+                parseFloat(table311Match[4]) || 0,
+                parseFloat(table311Match[5]) || 0,
+                parseFloat(table311Match[6]) || 0,
+                parseFloat(table311Match[7]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Table 3.2 rows
+        const table32Match = line.match(/Supplies made to\s+([A-Za-z\s,]+?)\s+([\d.]+)\s+([\d.]+)/);
+        if (table32Match && line.includes('3.2')) {
+            rows.push([
+                '3.2.' + table32Match[1].trim(),
+                table32Match[1].trim(),
+                parseFloat(table32Match[2]) || 0,
+                parseFloat(table32Match[3]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Table 4 - ITC rows
+        // Pattern: Description 12345.00 12345.00 12345.00 12345.00
+        const itcMatch = line.match(/^([A-Z][A-Za-z\s,.()\d]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (itcMatch && (line.includes('ITC') || line.includes('Import') || line.includes('supplies'))) {
+            rows.push([
+                '4.' + itcMatch[1].trim(),
+                itcMatch[1].trim(),
+                parseFloat(itcMatch[2]) || 0,
+                parseFloat(itcMatch[3]) || 0,
+                parseFloat(itcMatch[4]) || 0,
+                parseFloat(itcMatch[5]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Table 5 rows
+        const table5Match = line.match(/(From a supplier under composition scheme|Non GST supply)\s+([\d.]+)\s+([\d.]+)/);
+        if (table5Match) {
+            rows.push([
+                '5.' + table5Match[1],
+                table5Match[1],
+                parseFloat(table5Match[2]) || 0,
+                parseFloat(table5Match[3]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Table 5.1 - Interest and Late fee
+        if (line.includes('Interest Paid') || line.includes('Late fee')) {
+            const values = line.match(/([\d.]+)/g);
+            if (values && values.length >= 4) {
+                rows.push([
+                    '5.1 ' + (line.includes('Interest') ? 'Interest' : 'Late fee'),
+                    line.includes('Interest') ? 'Interest Paid' : 'Late fee',
+                    parseFloat(values[0]) || 0,
+                    parseFloat(values[1]) || 0,
+                    parseFloat(values[2]) || 0,
+                    parseFloat(values[3]) || 0
+                ]);
+            }
+            continue;
+        }
+
+        // Parse Table 6.1 - Payment of tax
+        // Pattern: (A) Other than reverse charge Integrated tax 12345.00 12345.00 12345.00 ...
+        const paymentMatch = line.match(/\(([A-Z])\)\s+([A-Za-z\s,]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (paymentMatch) {
+            rows.push([
+                '6.1.' + paymentMatch[1] + ' ' + paymentMatch[2].trim(),
+                paymentMatch[2].trim(),
+                parseFloat(paymentMatch[3]) || 0,
+                parseFloat(paymentMatch[4]) || 0,
+                parseFloat(paymentMatch[5]) || 0,
+                parseFloat(paymentMatch[6]) || 0,
+                parseFloat(paymentMatch[7]) || 0,
+                parseFloat(paymentMatch[8]) || 0,
+                parseFloat(paymentMatch[9]) || 0
+            ]);
+            continue;
+        }
+
+        // Parse Verification
+        if (line.includes('Verification')) {
+            rows.push(['VERIFICATION']);
+            continue;
+        }
+        if (line.includes('Name of Authorized Signatory')) {
+            const signMatch = line.match(/Name of Authorized Signatory\s+(.+?)(?=\s+Designation|$)/);
+            if (signMatch) {
+                rows.push(['Signatory:', signMatch[1]]);
+            }
+            continue;
+        }
+        if (line.includes('Designation')) {
+            const desigMatch = line.match(/Designation\s*\/Status\s+(.+?)$/);
+            if (desigMatch) {
+                rows.push(['Designation:', desigMatch[1]]);
+            }
+            continue;
         }
     }
 
-    // ----- TABLE 3.1: Outward supplies -----
-    const table31Pattern = /3\.1\s+Details of Outward supplies.*?<table>(.*?)<\/table>/s;
-    const table31Match = allText.match(table31Pattern);
-    if (table31Match) {
-        const tableContent = table31Match[1];
-        const rows = tableContent.split(/(?=\([a-e]\))/);
-        
-        rows.forEach(row => {
-            const cleanRow = row.replace(/\s+/g, ' ').trim();
-            if (!cleanRow) return;
-            
-            // Parse row based on pattern
-            const parts = cleanRow.match(/\(([a-e])\)\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-            if (parts) {
-                data.table31.rows.push({
-                    label: parts[1],
-                    description: parts[2].trim(),
-                    totalTaxableValue: parseFloat(parts[3]) || 0,
-                    integratedTax: parseFloat(parts[4]) || 0,
-                    centralTax: parseFloat(parts[5]) || 0,
-                    stateUTTax: parseFloat(parts[6]) || 0,
-                    cess: parseFloat(parts[7]) || 0
-                });
-            }
-        });
+    // If we have very few rows, try a different parsing approach - extract number patterns
+    if (rows.length < 10) {
+        return extractNumbersBySection(text);
     }
 
-    // ----- TABLE 3.1.1: Section 9(5) supplies -----
-    const table311Pattern = /3\.1\.1\s+Details of Supplies notified.*?<table>(.*?)<\/table>/s;
-    const table311Match = allText.match(table311Pattern);
-    if (table311Match) {
-        const tableContent = table311Match[1];
-        const rows = tableContent.split(/(?=\([i]{2}\))/);
-        
-        rows.forEach(row => {
-            const cleanRow = row.replace(/\s+/g, ' ').trim();
-            if (!cleanRow) return;
-            
-            const parts = cleanRow.match(/\(([i]+)\)\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-            if (parts) {
-                data.table311.rows.push({
-                    label: parts[1],
-                    description: parts[2].trim(),
-                    totalTaxableValue: parseFloat(parts[3]) || 0,
-                    integratedTax: parseFloat(parts[4]) || 0,
-                    centralTax: parseFloat(parts[5]) || 0,
-                    stateUTTax: parseFloat(parts[6]) || 0,
-                    cess: parseFloat(parts[7]) || 0
-                });
-            }
-        });
-    }
-
-    // ----- TABLE 3.2: Inter-state supplies -----
-    const table32Pattern = /3\.2\s+Out of supplies made.*?<table>(.*?)<\/table>/s;
-    const table32Match = allText.match(table32Pattern);
-    if (table32Match) {
-        const tableContent = table32Match[1];
-        const rows = tableContent.split(/(?=Supplies made to)/);
-        
-        rows.forEach(row => {
-            const cleanRow = row.replace(/\s+/g, ' ').trim();
-            if (!cleanRow) return;
-            
-            const parts = cleanRow.match(/Supplies made to\s+([^\d]*?)\s+([\d.]+)\s+([\d.]+)/);
-            if (parts) {
-                data.table32.rows.push({
-                    nature: parts[1].trim(),
-                    totalTaxableValue: parseFloat(parts[2]) || 0,
-                    integratedTax: parseFloat(parts[3]) || 0
-                });
-            }
-        });
-    }
-
-    // ----- TABLE 4: Eligible ITC -----
-    const table4Pattern = /4\.\s+Eligible ITC.*?<table>(.*?)<\/table>/s;
-    const table4Match = allText.match(table4Pattern);
-    if (table4Match) {
-        const tableContent = table4Match[1];
-        // Parse ITC rows (they appear as key-value pairs in the text)
-        const itcSections = tableContent.split(/(?=[A-Z]\.\s+)/);
-        
-        itcSections.forEach(section => {
-            const cleanSection = section.replace(/\s+/g, ' ').trim();
-            if (!cleanSection) return;
-            
-            const lines = cleanSection.split(/\d+\)\s*/);
-            lines.forEach(line => {
-                const cleanLine = line.trim();
-                if (!cleanLine) return;
-                
-                // Try to parse as a data row
-                const parts = cleanLine.match(/^([^0-9]*?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-                if (parts) {
-                    data.table4.rows.push({
-                        description: parts[1].trim(),
-                        integratedTax: parseFloat(parts[2]) || 0,
-                        centralTax: parseFloat(parts[3]) || 0,
-                        stateUTTax: parseFloat(parts[4]) || 0,
-                        cess: parseFloat(parts[5]) || 0
-                    });
-                }
-            });
-        });
-    }
-
-    // ----- TABLE 5: Exempt supplies -----
-    const table5Pattern = /5\s+Values of exempt.*?<table>(.*?)<\/table>/s;
-    const table5Match = allText.match(table5Pattern);
-    if (table5Match) {
-        const tableContent = table5Match[1];
-        const rows = tableContent.split(/(?=From a supplier|Non GST)/);
-        
-        rows.forEach(row => {
-            const cleanRow = row.replace(/\s+/g, ' ').trim();
-            if (!cleanRow) return;
-            
-            const parts = cleanRow.match(/([A-Za-z\s,]+)\s+([\d.]+)\s+([\d.]+)/);
-            if (parts) {
-                data.table5.rows.push({
-                    nature: parts[1].trim(),
-                    interState: parseFloat(parts[2]) || 0,
-                    intraState: parseFloat(parts[3]) || 0
-                });
-            }
-        });
-    }
-
-    // ----- TABLE 5.1: Interest and Late fee -----
-    const table51Pattern = /5\.1\s+Interest and Late fee.*?<table>(.*?)<\/table>/s;
-    const table51Match = allText.match(table51Pattern);
-    if (table51Match) {
-        const tableContent = table51Match[1];
-        // Parse the table content
-        const lines = tableContent.split(/\s+/);
-        // This is a simplified parse - the actual structure varies
-        data.table51.rows.push({
-            description: 'Interest and Late fee data',
-            integratedTax: 0,
-            centralTax: 0,
-            stateUTTax: 0,
-            cess: 0
-        });
-    }
-
-    // ----- TABLE 6.1: Payment of tax -----
-    const table61Pattern = /6\.1\s+Payment of tax.*?<table>(.*?)<\/table>/s;
-    const table61Match = allText.match(table61Pattern);
-    if (table61Match) {
-        const tableContent = table61Match[1];
-        // Parse payment rows
-        const lines = tableContent.split(/(?=\(A\)|\(B\))/);
-        
-        lines.forEach(line => {
-            const cleanLine = line.replace(/\s+/g, ' ').trim();
-            if (!cleanLine) return;
-            
-            // Parse the complex payment table
-            const parts = cleanLine.match(/([A-Za-z\s]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-            if (parts) {
-                data.table61.rows.push({
-                    description: parts[1].trim(),
-                    taxPayable: parseFloat(parts[2]) || 0,
-                    adjustment: parseFloat(parts[3]) || 0,
-                    netTaxPayable: parseFloat(parts[4]) || 0,
-                    itcIntegrated: parseFloat(parts[5]) || 0,
-                    itcCentral: parseFloat(parts[6]) || 0,
-                    itcState: parseFloat(parts[7]) || 0,
-                    cash: parseFloat(parts[8]) || 0
-                });
-            }
-        });
-    }
-
-    // ----- Verification -----
-    const verificationMatch = allText.match(/Verification:.*?Date:\s*([\d\/]+).*?Name of Authorized Signatory\s*([^\n]+).*?Designation\s*\/Status\s*([^\n]+)/s);
-    if (verificationMatch) {
-        data.verification = {
-            date: verificationMatch[1].trim(),
-            signatory: verificationMatch[2].trim(),
-            designation: verificationMatch[3].trim()
-        };
-    }
-
-    return data;
+    return rows;
 }
 
-// ============ EXCEL BUILDER ============
-
-function buildGSTR3BWorkbook(filename, data) {
-    const wb = XLSX.utils.book_new();
+// Fallback parser - extract numbers and labels by section
+function extractNumbersBySection(text) {
+    const rows = [];
     
-    // --- Sheet 1: Header Info ---
-    const headerData = [
-        ['GSTR-3B Return Data'],
-        [''],
-        ['File:', filename],
-        ['Year:', data.header.year || ''],
-        ['Period:', data.header.period || ''],
-        ['GSTIN:', data.header.gstin || ''],
-        ['Legal Name:', data.header.legalName || ''],
-        ['Trade Name:', data.header.tradeName || ''],
-        ['ARN:', data.header.arn || ''],
-        ['ARN Date:', data.header.arnDate || ''],
-        ['']
-    ];
-    const headerSheet = XLSX.utils.aoa_to_sheet(headerData);
-    XLSX.utils.book_append_sheet(wb, headerSheet, 'Header');
+    // Find all section headers
+    const sections = text.match(/\d+\.\d+(\.\d+)?\s+[A-Za-z\s,()]+?(?=\d+\.\d+\.\d+?|$)/g);
+    
+    if (sections) {
+        sections.forEach(section => {
+            const cleanSection = section.replace(/\s+/g, ' ').trim();
+            if (cleanSection) {
+                rows.push([cleanSection]);
+            }
+        });
+    }
 
-    // --- Sheet 2: Table 3.1 ---
-    const table31Data = [
-        ['3.1 Outward Supplies'],
-        ['Label', 'Description', 'Total Taxable Value', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
-    ];
-    data.table31.rows.forEach(row => {
-        table31Data.push([
-            row.label || '',
-            row.description || '',
-            row.totalTaxableValue || 0,
-            row.integratedTax || 0,
-            row.centralTax || 0,
-            row.stateUTTax || 0,
-            row.cess || 0
-        ]);
+    // Find all number patterns that look like GST values
+    const numberPatterns = text.match(/\d+\.\d+|\d{2,}(?:\.\d{2})?/g);
+    
+    // Group numbers by section
+    let currentRow = [];
+    let sectionCounter = 0;
+    
+    numberPatterns.forEach(num => {
+        currentRow.push(num);
+        if (currentRow.length >= 6) {
+            rows.push(['Row ' + (sectionCounter + 1), ...currentRow]);
+            currentRow = [];
+            sectionCounter++;
+        }
     });
-    const table31Sheet = XLSX.utils.aoa_to_sheet(table31Data);
-    XLSX.utils.book_append_sheet(wb, table31Sheet, 'Table 3.1');
 
-    // --- Sheet 3: Table 3.1.1 ---
-    const table311Data = [
-        ['3.1.1 Section 9(5) Supplies'],
-        ['Label', 'Description', 'Total Taxable Value', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
-    ];
-    data.table311.rows.forEach(row => {
-        table311Data.push([
-            row.label || '',
-            row.description || '',
-            row.totalTaxableValue || 0,
-            row.integratedTax || 0,
-            row.centralTax || 0,
-            row.stateUTTax || 0,
-            row.cess || 0
-        ]);
+    return rows;
+}
+
+// ============ EXCEL BUILDER - Single Sheet ============
+
+function buildSingleSheetWorkbook(filename, data) {
+    const sheetData = [];
+
+    // Header
+    sheetData.push(['GSTR-3B Return Data']);
+    sheetData.push(['File:', filename]);
+    sheetData.push([]);
+
+    // Add all data rows
+    data.forEach(row => {
+        if (Array.isArray(row)) {
+            sheetData.push(row);
+        } else {
+            sheetData.push([String(row)]);
+        }
     });
-    const table311Sheet = XLSX.utils.aoa_to_sheet(table311Data);
-    XLSX.utils.book_append_sheet(wb, table311Sheet, 'Table 3.1.1');
 
-    // --- Sheet 4: Table 3.2 ---
-    const table32Data = [
-        ['3.2 Inter-state Supplies'],
-        ['Nature of Supplies', 'Total Taxable Value', 'Integrated Tax']
-    ];
-    data.table32.rows.forEach(row => {
-        table32Data.push([
-            row.nature || '',
-            row.totalTaxableValue || 0,
-            row.integratedTax || 0
-        ]);
-    });
-    const table32Sheet = XLSX.utils.aoa_to_sheet(table32Data);
-    XLSX.utils.book_append_sheet(wb, table32Sheet, 'Table 3.2');
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    
+    // Auto column widths
+    const maxCols = Math.max(...sheetData.map(row => Array.isArray(row) ? row.length : 1));
+    const colWidths = [];
+    for (let c = 0; c < maxCols; c++) {
+        let maxLen = 0;
+        for (let r = 0; r < sheetData.length; r++) {
+            const val = sheetData[r][c] || '';
+            maxLen = Math.max(maxLen, String(val).length);
+        }
+        colWidths.push({ wch: Math.min(Math.max(maxLen + 2, 12), 40) });
+    }
+    ws['!cols'] = colWidths;
 
-    // --- Sheet 5: Table 4 ---
-    const table4Data = [
-        ['4. Eligible ITC'],
-        ['Description', 'Integrated Tax', 'Central Tax', 'State/UT Tax', 'Cess']
-    ];
-    data.table4.rows.forEach(row => {
-        table4Data.push([
-            row.description || '',
-            row.integratedTax || 0,
-            row.centralTax || 0,
-            row.stateUTTax || 0,
-            row.cess || 0
-        ]);
-    });
-    const table4Sheet = XLSX.utils.aoa_to_sheet(table4Data);
-    XLSX.utils.book_append_sheet(wb, table4Sheet, 'Table 4');
-
-    // --- Sheet 6: Table 5 ---
-    const table5Data = [
-        ['5. Exempt, Nil-rated and Non-GST Supplies'],
-        ['Nature', 'Inter-State', 'Intra-State']
-    ];
-    data.table5.rows.forEach(row => {
-        table5Data.push([
-            row.nature || '',
-            row.interState || 0,
-            row.intraState || 0
-        ]);
-    });
-    const table5Sheet = XLSX.utils.aoa_to_sheet(table5Data);
-    XLSX.utils.book_append_sheet(wb, table5Sheet, 'Table 5');
-
-    // --- Sheet 7: Table 6.1 ---
-    const table61Data = [
-        ['6.1 Payment of Tax'],
-        ['Description', 'Tax Payable', 'Adjustment', 'Net Tax Payable', 'ITC Integrated', 'ITC Central', 'ITC State/UT', 'Cash']
-    ];
-    data.table61.rows.forEach(row => {
-        table61Data.push([
-            row.description || '',
-            row.taxPayable || 0,
-            row.adjustment || 0,
-            row.netTaxPayable || 0,
-            row.itcIntegrated || 0,
-            row.itcCentral || 0,
-            row.itcState || 0,
-            row.cash || 0
-        ]);
-    });
-    const table61Sheet = XLSX.utils.aoa_to_sheet(table61Data);
-    XLSX.utils.book_append_sheet(wb, table61Sheet, 'Table 6.1');
-
-    // --- Sheet 8: Verification ---
-    const verificationData = [
-        ['Verification'],
-        ['Date:', data.verification.date || ''],
-        ['Authorized Signatory:', data.verification.signatory || ''],
-        ['Designation:', data.verification.designation || '']
-    ];
-    const verificationSheet = XLSX.utils.aoa_to_sheet(verificationData);
-    XLSX.utils.book_append_sheet(wb, verificationSheet, 'Verification');
-
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'GSTR-3B Data');
     return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 }
 
