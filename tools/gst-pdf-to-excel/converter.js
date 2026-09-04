@@ -13,9 +13,12 @@
  */
 
 // ---- Tunable heuristics (adjust based on real-world GST PDF testing) ----
-const ROW_Y_TOLERANCE = 3;          // px difference to treat two text items as same row
+const ROW_Y_TOLERANCE = 3;          // px difference to treat two text items as same row (fallback path only)
 const WATERMARK_FONT_SIZE = 40;     // items rendered at/above this size are treated as a stamp/watermark, not table content
                                      // (portal "FILED" stamps in sample PDFs render at ~117-167pt vs ~8-18pt for real text)
+const LINE_MERGE_TOLERANCE = 1.5;   // pt tolerance to merge near-duplicate parallel ruling lines into one grid line
+const CELL_BOUND_TOLERANCE = 1.5;   // pt tolerance when checking a line actually spans a candidate cell's edge
+const CELL_ITEM_PADDING = 2;        // pt padding when testing whether a text item falls inside a cell rectangle
 const PDFJS_VERSION = '3.11.174';
 const PDFJS_LIB_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
@@ -47,8 +50,9 @@ export function getToolHTML() {
                 Each PDF is converted to its own Excel file, packaged together as a .zip.
             </p>
             <p style="font-size:0.8rem;color:#b58b00;margin-bottom:1rem;">
-                ⚠️ Table detection is heuristic-based (position clustering, not a guaranteed template match).
-                Please review output before relying on it, especially for complex or multi-page tables.
+                ⚠️ Tables are reconstructed from the PDF's own drawn grid lines where present, falling back to
+                text-position heuristics elsewhere. Please review output before relying on it, especially for
+                complex or multi-page tables.
             </p>
 
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
@@ -370,14 +374,274 @@ async function convertSinglePdf(file) {
 
         fullText += ' ' + items.map(i => i.str).join(' ');
 
-        const rowGroups = clusterRows(items);
-        rowGroups.forEach(rowItems => {
-            allRows.push(buildRowCells(rowItems));
-        });
+        // 1) Try to reconstruct tables from the PDF's own drawn ruling lines —
+        //    far more reliable than text-position guessing when lines exist.
+        let gridEntries = [];
+        let consumed = new Set();
+
+        try {
+            const segments = await extractPageLineSegments(page);
+            if (segments.length > 0) {
+                const { horizontals, verticals } = buildLineGrid(segments);
+                const gridResult = extractGridRows(items, horizontals, verticals);
+                gridEntries = gridResult.rows;
+                consumed = gridResult.consumed;
+            }
+        } catch (err) {
+            // Line-based detection failed for this page (unexpected PDF structure,
+            // unsupported operator, etc.) — fall through to text-position parsing
+            // for the whole page, same as before this feature existed.
+            console.warn('Line-based table detection failed on page ' + pageNum + ', using text-position fallback:', err);
+            gridEntries = [];
+            consumed = new Set();
+        }
+
+        // 2) Anything not inside a detected grid cell — free text, headers, or
+        //    an entire page/return-type with no ruling lines at all — still
+        //    goes through the existing label/value-token fallback.
+        const leftoverItems = items.filter((_, idx) => !consumed.has(idx));
+        const fallbackGroups = clusterRows(leftoverItems);
+        const fallbackEntries = fallbackGroups.map(rowItems => ({
+            y: Math.max(...rowItems.map(it => it.y)),
+            cells: buildRowCells(rowItems)
+        }));
+
+        // 3) Merge both sources back into top-to-bottom reading order
+        const combined = [...gridEntries, ...fallbackEntries].sort((a, b) => b.y - a.y);
+        combined.forEach(entry => allRows.push(entry.cells));
     }
 
     const profile = detectProfile(fullText);
     return { profile, rows: allRows };
+}
+
+/**
+ * Walk a page's content-stream drawing operators and collect every straight
+ * line segment actually drawn or filled (stroked borders, and the edges of
+ * filled rectangles such as shaded header bands). Returns segments in the
+ * same PDF user-space coordinates as text item positions, so both can be
+ * compared directly.
+ *
+ * This uses pdf.js's lower-level getOperatorList() API — getTextContent()
+ * has no concept of drawn lines, only text.
+ */
+async function extractPageLineSegments(page) {
+    const OPS = window.pdfjsLib.OPS;
+    const opList = await page.getOperatorList();
+
+    let ctm = [1, 0, 0, 1, 0, 0]; // identity matrix [a, b, c, d, e, f]
+    const matrixStack = [];
+    let pending = [];
+    const segments = [];
+
+    function applyMatrix(m, x, y) {
+        return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+    }
+    function multiplyMatrix(m1, m2) {
+        // Result of applying m1 first, then m2 (m2 is the existing CTM)
+        return [
+            m1[0] * m2[0] + m1[1] * m2[2],
+            m1[0] * m2[1] + m1[1] * m2[3],
+            m1[2] * m2[0] + m1[3] * m2[2],
+            m1[2] * m2[1] + m1[3] * m2[3],
+            m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
+            m1[4] * m2[1] + m1[5] * m2[3] + m2[5]
+        ];
+    }
+
+    for (let i = 0; i < opList.fnArray.length; i++) {
+        const fn = opList.fnArray[i];
+        const args = opList.argsArray[i];
+
+        if (fn === OPS.save) {
+            matrixStack.push(ctm.slice());
+        } else if (fn === OPS.restore) {
+            ctm = matrixStack.pop() || ctm;
+        } else if (fn === OPS.transform) {
+            ctm = multiplyMatrix(args, ctm);
+        } else if (fn === OPS.constructPath) {
+            const pathOps = args[0];
+            const coords = args[1];
+            let idx = 0;
+            let cx = null, cy = null, sx = null, sy = null;
+
+            for (let j = 0; j < pathOps.length; j++) {
+                const pOp = pathOps[j];
+
+                if (pOp === OPS.moveTo) {
+                    const [tx, ty] = applyMatrix(ctm, coords[idx], coords[idx + 1]);
+                    idx += 2;
+                    cx = tx; cy = ty; sx = tx; sy = ty;
+                } else if (pOp === OPS.lineTo) {
+                    const [tx, ty] = applyMatrix(ctm, coords[idx], coords[idx + 1]);
+                    idx += 2;
+                    if (cx !== null) pending.push({ x0: cx, y0: cy, x1: tx, y1: ty });
+                    cx = tx; cy = ty;
+                } else if (pOp === OPS.curveTo) {
+                    // Table borders are never curved — approximate as a straight
+                    // line to the endpoint so a curve doesn't break line detection.
+                    const [tx, ty] = applyMatrix(ctm, coords[idx + 4], coords[idx + 5]);
+                    idx += 6;
+                    if (cx !== null) pending.push({ x0: cx, y0: cy, x1: tx, y1: ty });
+                    cx = tx; cy = ty;
+                } else if (pOp === OPS.closePath) {
+                    if (cx !== null && sx !== null) {
+                        pending.push({ x0: cx, y0: cy, x1: sx, y1: sy });
+                    }
+                    cx = sx; cy = sy;
+                } else if (pOp === OPS.rectangle) {
+                    const x = coords[idx], y = coords[idx + 1], w = coords[idx + 2], h = coords[idx + 3];
+                    idx += 4;
+                    const p0 = applyMatrix(ctm, x, y);
+                    const p1 = applyMatrix(ctm, x + w, y);
+                    const p2 = applyMatrix(ctm, x + w, y + h);
+                    const p3 = applyMatrix(ctm, x, y + h);
+                    pending.push({ x0: p0[0], y0: p0[1], x1: p1[0], y1: p1[1] });
+                    pending.push({ x0: p1[0], y0: p1[1], x1: p2[0], y1: p2[1] });
+                    pending.push({ x0: p2[0], y0: p2[1], x1: p3[0], y1: p3[1] });
+                    pending.push({ x0: p3[0], y0: p3[1], x1: p0[0], y1: p0[1] });
+                    cx = p0[0]; cy = p0[1]; sx = cx; sy = cy;
+                }
+            }
+        } else if (
+            fn === OPS.stroke || fn === OPS.closeStroke ||
+            fn === OPS.fill || fn === OPS.eoFill ||
+            fn === OPS.fillStroke || fn === OPS.eoFillStroke ||
+            fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke
+        ) {
+            // Path is actually painted (border stroke, or a filled rect like a
+            // shaded header band) — its edges are real, usable grid lines.
+            segments.push(...pending);
+            pending = [];
+        } else if (fn === OPS.endPath) {
+            pending = [];
+        }
+    }
+
+    return segments;
+}
+
+/**
+ * Classify raw line segments as horizontal or vertical, then merge
+ * near-duplicate parallel lines (e.g. a rect edge sitting almost on top of
+ * a separately stroked border) into one representative grid line each,
+ * keeping the widest span seen at that position.
+ */
+function buildLineGrid(segments) {
+    const AXIS_TOL = 0.75; // how straight a segment must be to count as purely horizontal/vertical
+    const horizontalsRaw = [];
+    const verticalsRaw = [];
+
+    segments.forEach(s => {
+        const dx = Math.abs(s.x1 - s.x0);
+        const dy = Math.abs(s.y1 - s.y0);
+        if (dy < AXIS_TOL && dx > AXIS_TOL) {
+            horizontalsRaw.push({ y: (s.y0 + s.y1) / 2, x0: Math.min(s.x0, s.x1), x1: Math.max(s.x0, s.x1) });
+        } else if (dx < AXIS_TOL && dy > AXIS_TOL) {
+            verticalsRaw.push({ x: (s.x0 + s.x1) / 2, y0: Math.min(s.y0, s.y1), y1: Math.max(s.y0, s.y1) });
+        }
+    });
+
+    return {
+        horizontals: mergeCollinear(horizontalsRaw, 'y', 'x0', 'x1'),
+        verticals: mergeCollinear(verticalsRaw, 'x', 'y0', 'y1')
+    };
+}
+
+function mergeCollinear(list, posKey, startKey, endKey) {
+    const sorted = [...list].sort((a, b) => a[posKey] - b[posKey]);
+    const merged = [];
+
+    sorted.forEach(item => {
+        const last = merged[merged.length - 1];
+        if (last && Math.abs(item[posKey] - last[posKey]) <= LINE_MERGE_TOLERANCE) {
+            last[startKey] = Math.min(last[startKey], item[startKey]);
+            last[endKey] = Math.max(last[endKey], item[endKey]);
+        } else {
+            merged.push({ ...item });
+        }
+    });
+
+    return merged;
+}
+
+/**
+ * Reconstruct table rows from a grid of ruling lines. A candidate cell
+ * (bounded by one adjacent pair of row-lines and one adjacent pair of
+ * column-lines) is only accepted if lines actually span all four of its
+ * edges — this is what makes the technique robust to a page containing
+ * several unrelated tables at different positions: a cell is only "real"
+ * where the document itself drew a box around it.
+ */
+function extractGridRows(items, horizontals, verticals) {
+    if (horizontals.length < 2 || verticals.length < 2) {
+        return { rows: [], consumed: new Set() };
+    }
+
+    const rowYs = [...new Set(horizontals.map(h => h.y))].sort((a, b) => b - a); // top to bottom
+    const colXs = [...new Set(verticals.map(v => v.x))].sort((a, b) => a - b);   // left to right
+
+    function hLineAt(y, left, right) {
+        return horizontals.some(h =>
+            Math.abs(h.y - y) <= CELL_BOUND_TOLERANCE &&
+            h.x0 <= left + CELL_BOUND_TOLERANCE && h.x1 >= right - CELL_BOUND_TOLERANCE
+        );
+    }
+    function vLineAt(x, top, bottom) {
+        return verticals.some(v =>
+            Math.abs(v.x - x) <= CELL_BOUND_TOLERANCE &&
+            v.y0 <= bottom + CELL_BOUND_TOLERANCE && v.y1 >= top - CELL_BOUND_TOLERANCE
+        );
+    }
+
+    const rows = [];
+    const consumed = new Set();
+
+    for (let r = 0; r < rowYs.length - 1; r++) {
+        const top = rowYs[r];
+        const bottom = rowYs[r + 1];
+        if (top - bottom < 2) continue; // skip degenerate near-zero-height strips
+
+        const rowCells = [];
+        let anyBounded = false;
+
+        for (let c = 0; c < colXs.length - 1; c++) {
+            const left = colXs[c];
+            const right = colXs[c + 1];
+
+            const bounded =
+                hLineAt(top, left, right) && hLineAt(bottom, left, right) &&
+                vLineAt(left, top, bottom) && vLineAt(right, top, bottom);
+
+            if (!bounded) {
+                rowCells.push(null); // no drawn cell here — leave for the text-fallback pass
+                continue;
+            }
+
+            anyBounded = true;
+            const cellItems = [];
+            items.forEach((item, idx) => {
+                if (
+                    item.x >= left - CELL_ITEM_PADDING && item.x <= right + CELL_ITEM_PADDING &&
+                    item.y >= bottom - CELL_ITEM_PADDING && item.y <= top + CELL_ITEM_PADDING
+                ) {
+                    cellItems.push(item);
+                    consumed.add(idx);
+                }
+            });
+            cellItems.sort((a, b) => (a.y !== b.y ? b.y - a.y : a.x - b.x)); // top-to-bottom, then left-to-right (handles text wrapped within one cell)
+            rowCells.push(cellItems.map(it => it.str.trim()).join(' '));
+        }
+
+        if (anyBounded) {
+            rows.push({
+                y: top,
+                cells: rowCells.map(c => (c === null ? '' : parseCellValue(c)))
+            });
+        }
+    }
+
+    return { rows, consumed };
 }
 
 /**
