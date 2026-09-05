@@ -1,19 +1,124 @@
 /**
  * ========================================
- * GSTR-3B Specific PDF to Excel Converter
- * All tables in a single sheet, stacked vertically
+ * GST Return PDF to Excel Converter
+ * Convert one or more GST return PDFs (GSTR-1, 3B, 2A/2B, 9, etc.)
+ * into Excel files natively in the browser, packaged as a .zip
  * ========================================
+ *
+ * NOTE ON ACCURACY:
+ * Table reconstruction from PDF text is heuristic (position-based
+ * clustering), not a guaranteed 1:1 extraction. It works best on
+ * clean, text-based (non-scanned) PDFs like those downloaded directly
+ * from the GST portal. Always spot-check output before relying on it.
  */
 
+// ---- Tunable heuristics (adjust based on real-world GST PDF testing) ----
+const ROW_Y_TOLERANCE = 3;          // px difference to treat two text items as same row (fallback path only)
+const WATERMARK_FONT_SIZE = 40;     // items rendered at/above this size are treated as a stamp/watermark, not table content
+                                     // (portal "FILED" stamps in sample PDFs render at ~117-167pt vs ~8-18pt for real text)
+const RENDER_SCALE = 2;             // canvas render resolution multiplier for line detection (higher = more accurate, slower)
+const DARK_THRESHOLD = 200;         // average RGB below this is treated as "ink" when scanning for lines (0=black, 255=white)
+const MIN_LINE_LENGTH_PT = 30;      // a contiguous dark pixel run must span at least this many PDF points to count as a ruling line
+const GRID_MATCH_TOLERANCE = 1.5;   // pt tolerance when bucketing a text item into a detected grid row/column
 const PDFJS_VERSION = '3.11.174';
 const PDFJS_LIB_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
 
+// ---- Return type detection (display label only — does not alter parsing) ----
+const RETURN_PROFILES = [
+    { key: 'GSTR-1', label: 'GSTR-1 (Outward Supplies)', match: [/form\s*gstr-?1\b/i, /\bgstr-?1\b/i] },
+    { key: 'GSTR-2A', label: 'GSTR-2A (Auto-drafted ITC)', match: [/\bgstr-?2a\b/i] },
+    { key: 'GSTR-2B', label: 'GSTR-2B (Auto-drafted ITC Statement)', match: [/\bgstr-?2b\b/i] },
+    { key: 'GSTR-3B', label: 'GSTR-3B (Summary Return)', match: [/form\s*gstr-?3b\b/i, /\bgstr-?3b\b/i] },
+    { key: 'GSTR-9', label: 'GSTR-9 (Annual Return)', match: [/form\s*gstr-?9\b/i, /\bgstr-?9\b/i] }
+];
+
 let pdfFiles = [];
 let elements = {};
 
-// ============ LIBRARY LOADERS ============
+/**
+ * Get the HTML for the GST converter tool
+ */
+export function getToolHTML() {
+    return `
+        <div id="gstPdfToExcelTool">
+            <div style="padding:0.75rem 1rem;border-radius:12px;background:#EEF2FF;margin-bottom:1rem;font-weight:500;color:#1E293B;">
+                🧾 GST Returns to Excel
+            </div>
 
+            <p style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem;">
+                Upload one or more GST return PDFs downloaded from the portal (GSTR-1, 3B, 2A/2B, 9, etc.).
+                Each PDF is converted to its own Excel file, packaged together as a .zip.
+            </p>
+            <p style="font-size:0.8rem;color:#b58b00;margin-bottom:1rem;">
+                ⚠️ Tables are reconstructed by detecting the PDF's own ruling lines (like most PDF-to-Excel tools do),
+                building one grid per page. Different tables on the same page may share a wider grid with some
+                blank filler cells — please review output before relying on it.
+            </p>
+
+            <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
+                <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">GST Return PDFs</label>
+                <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                    <button id="gstBrowseBtn" style="padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
+                        📁 Browse PDFs
+                    </button>
+                    <span style="font-size:0.8rem;color:#64748B;">You can select multiple files, or add more in separate steps.</span>
+                    <input type="file" id="gstFileInput" accept=".pdf" multiple style="display:none;">
+                </div>
+                <div id="gstFileList"></div>
+            </div>
+
+            <button id="gstGenerateBtn" disabled style="width:100%;padding:0.75rem;border:none;border-radius:12px;background:#4F46E5;color:white;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
+                📄 Select PDF files first
+            </button>
+
+            <div id="gstStatus" style="margin-top:0.75rem;padding:0.75rem;border-radius:12px;background:#EEF2FF;text-align:center;font-weight:500;font-size:0.9rem;color:#1E293B;white-space:pre-line;">
+                📤 Upload one or more GST return PDFs to begin
+            </div>
+
+            <div id="gstResultsContainer" style="margin-top:0.75rem;"></div>
+
+            <div id="gstDownloadContainer" style="display:none;margin-top:0.75rem;text-align:center;">
+                <a id="gstDownloadLink" style="display:inline-block;padding:0.6rem 1.5rem;background:#10B981;color:white;text-decoration:none;border-radius:8px;font-weight:600;cursor:pointer;">
+                    ⬇️ Download gst_converted_excel.zip
+                </a>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Initialize the GST PDF to Excel tool
+ */
+export function initTool() {
+    elements = {
+        browseBtn: document.getElementById('gstBrowseBtn'),
+        fileInput: document.getElementById('gstFileInput'),
+        fileListContainer: document.getElementById('gstFileList'),
+        generateBtn: document.getElementById('gstGenerateBtn'),
+        status: document.getElementById('gstStatus'),
+        resultsContainer: document.getElementById('gstResultsContainer'),
+        downloadContainer: document.getElementById('gstDownloadContainer'),
+        downloadLink: document.getElementById('gstDownloadLink')
+    };
+
+    pdfFiles = [];
+
+    setupFileInput();
+    setupGenerateButton();
+
+    // Load libraries in background so they're ready by the time the user hits generate
+    loadJSZip().catch(e => console.warn('JSZip background load:', e));
+    loadXLSX().catch(e => console.warn('XLSX background load:', e));
+    loadPDFJS().catch(e => console.warn('PDF.js background load:', e));
+
+    renderFileList();
+    setStatus('📤 Upload one or more GST return PDFs to begin', 'info');
+}
+
+/**
+ * Library loaders (same on-demand pattern as other tools)
+ */
 function loadJSZip() {
     return new Promise((resolve, reject) => {
         if (window.JSZip) return resolve();
@@ -59,77 +164,9 @@ function loadPDFJS() {
     });
 }
 
-// ============ UI FUNCTIONS ============
-
-export function getToolHTML() {
-    return `
-        <div id="gstPdfToExcelTool">
-            <div style="padding:0.75rem 1rem;border-radius:12px;background:#EEF2FF;margin-bottom:1rem;font-weight:500;color:#1E293B;">
-                🧾 GSTR-3B to Excel Converter
-            </div>
-
-            <p style="font-size:0.85rem;color:#64748B;margin-bottom:0.5rem;">
-                Upload GSTR-3B PDFs downloaded from the GST portal. Each PDF is converted to Excel format.
-            </p>
-            <p style="font-size:0.8rem;color:#059669;margin-bottom:1rem;">
-                ✅ Purpose-built for GSTR-3B returns - extracts all tables into a single sheet
-            </p>
-
-            <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
-                <label style="font-weight:600;font-size:0.9rem;display:block;margin-bottom:0.3rem;">GSTR-3B PDFs</label>
-                <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
-                    <button id="gstBrowseBtn" style="padding:0.5rem 1.5rem;border:none;border-radius:8px;background:#4F46E5;color:white;font-weight:600;cursor:pointer;transition:all 0.2s;">
-                        📁 Browse PDFs
-                    </button>
-                    <span style="font-size:0.8rem;color:#64748B;">Select one or more GSTR-3B PDF files</span>
-                    <input type="file" id="gstFileInput" accept=".pdf" multiple style="display:none;">
-                </div>
-                <div id="gstFileList"></div>
-            </div>
-
-            <button id="gstGenerateBtn" disabled style="width:100%;padding:0.75rem;border:none;border-radius:12px;background:#4F46E5;color:white;font-weight:600;font-size:1rem;cursor:pointer;transition:all 0.2s;">
-                📄 Select PDF files first
-            </button>
-
-            <div id="gstStatus" style="margin-top:0.75rem;padding:0.75rem;border-radius:12px;background:#EEF2FF;text-align:center;font-weight:500;font-size:0.9rem;color:#1E293B;white-space:pre-line;">
-                📤 Upload GSTR-3B PDFs to begin
-            </div>
-
-            <div id="gstResultsContainer" style="margin-top:0.75rem;"></div>
-
-            <div id="gstDownloadContainer" style="display:none;margin-top:0.75rem;text-align:center;">
-                <a id="gstDownloadLink" style="display:inline-block;padding:0.6rem 1.5rem;background:#10B981;color:white;text-decoration:none;border-radius:8px;font-weight:600;cursor:pointer;">
-                    ⬇️ Download gstr3b_converted_excel.zip
-                </a>
-            </div>
-        </div>
-    `;
-}
-
-export function initTool() {
-    elements = {
-        browseBtn: document.getElementById('gstBrowseBtn'),
-        fileInput: document.getElementById('gstFileInput'),
-        fileListContainer: document.getElementById('gstFileList'),
-        generateBtn: document.getElementById('gstGenerateBtn'),
-        status: document.getElementById('gstStatus'),
-        resultsContainer: document.getElementById('gstResultsContainer'),
-        downloadContainer: document.getElementById('gstDownloadContainer'),
-        downloadLink: document.getElementById('gstDownloadLink')
-    };
-
-    pdfFiles = [];
-    setupFileInput();
-    setupGenerateButton();
-    
-    loadJSZip().catch(e => console.warn('JSZip background load:', e));
-    loadXLSX().catch(e => console.warn('XLSX background load:', e));
-    loadPDFJS().catch(e => console.warn('PDF.js background load:', e));
-    
-    renderFileList();
-    setStatus('📤 Upload GSTR-3B PDFs to begin', 'info');
-}
-
+/**
+ * File input handling (multi-file, additive selection with remove)
+ */
 function setupFileInput() {
     if (elements.browseBtn) {
         const freshBtn = elements.browseBtn.cloneNode(true);
@@ -185,14 +222,15 @@ function renderFileList() {
     });
 
     elements.generateBtn.disabled = false;
-    elements.generateBtn.textContent = `📦 Convert ${pdfFiles.length} GSTR-3B File(s) to Excel (.zip)`;
+    elements.generateBtn.textContent = `📦 Convert ${pdfFiles.length} File(s) to Excel (.zip)`;
 }
 
+/**
+ * Generate button + main batch pipeline
+ */
 function setupGenerateButton() {
     elements.generateBtn.addEventListener('click', generateAll);
 }
-
-// ============ MAIN CONVERSION ============
 
 async function generateAll() {
     if (!pdfFiles.length) {
@@ -224,14 +262,14 @@ async function generateAll() {
         setStatus(`⏳ Converting ${i + 1}/${pdfFiles.length}: ${file.name}...`, 'info');
 
         try {
-            const extractedData = await extractGSTR3BData(file);
-            
-            if (!extractedData || extractedData.length === 0) {
-                results.push({ name: file.name, status: 'skip', reason: 'No GSTR-3B data found in PDF.' });
+            const { profile, rows } = await convertSinglePdf(file);
+
+            if (rows.length === 0) {
+                results.push({ name: file.name, status: 'skip', reason: 'No extractable text found (likely a scanned/image-only PDF).' });
                 continue;
             }
 
-            const xlsxArrayBuffer = buildSingleSheetWorkbook(file.name, extractedData);
+            const xlsxArrayBuffer = buildWorkbook(file.name, profile, rows);
             const blob = new Blob([xlsxArrayBuffer], { type: 'application/octet-stream' });
 
             const baseName = sanitizeFilename(file.name.replace(/\.pdf$/i, '')) + '.xlsx';
@@ -244,7 +282,7 @@ async function generateAll() {
             usedNames.add(finalName);
 
             outZip.file(finalName, blob);
-            results.push({ name: file.name, status: 'ok', reason: 'GSTR-3B Converted', outName: finalName });
+            results.push({ name: file.name, status: 'ok', reason: profile.label, outName: finalName });
 
         } catch (err) {
             const reason = (err && err.message) ? err.message : 'Unknown error';
@@ -267,8 +305,9 @@ async function generateAll() {
         const zipBlob = await outZip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(zipBlob);
         elements.downloadLink.href = url;
-        elements.downloadLink.download = 'gstr3b_converted_excel.zip';
+        elements.downloadLink.download = 'gst_converted_excel.zip';
         elements.downloadContainer.style.display = 'block';
+
         setStatus(`✅ Converted ${successCount}/${pdfFiles.length} file(s). Click below to download.`, 'success');
     } catch (err) {
         setStatus('❌ Error building zip: ' + err.message, 'error');
@@ -278,302 +317,9 @@ async function generateAll() {
     renderFileList();
 }
 
-// ============ GSTR-3B DATA EXTRACTION ============
-
-async function extractGSTR3BData(file) {
-    const buffer = await file.arrayBuffer();
-    let pdf;
-
-    try {
-        pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-    } catch (err) {
-        if (err && err.name === 'PasswordException') {
-            throw new Error('Password-protected PDF — not supported yet.');
-        }
-        throw new Error('Could not read PDF: ' + (err && err.message ? err.message : 'unknown error'));
-    }
-
-    // Extract ALL text from ALL pages as a single string
-    let fullText = '';
-    const pageTexts = [];
-
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        
-        const pageText = textContent.items
-            .filter(it => it.str && it.str.trim().length)
-            .map(it => it.str.trim())
-            .join(' ');
-        
-        pageTexts.push(pageText);
-        fullText += ' ' + pageText;
-    }
-
-    // Parse the full text
-    return parseGSTR3BFullText(fullText);
-}
-
-function parseGSTR3BFullText(text) {
-    const rows = [];
-    let currentSection = '';
-    let rowIndex = 0;
-
-    // Split by newlines or table markers
-    const lines = text.split(/\s+(?=<table>|<\/table>|(?=\d+\.\d+))/);
-    
-    // Process each line
-    for (let i = 0; i < lines.length; i++) {
-        let line = lines[i].trim();
-        if (!line) continue;
-
-        // Clean up the line - remove table tags and extra spaces
-        line = line.replace(/<table>|<\/table>/g, '').replace(/\s+/g, ' ').trim();
-        if (!line) continue;
-
-        // Check if this is a section header
-        const sectionMatch = line.match(/^(\d+(\.\d+)?)\s+(.+)/);
-        if (sectionMatch) {
-            currentSection = sectionMatch[1] + ' ' + sectionMatch[3];
-            rows.push([currentSection]);
-            rows.push([]); // Empty row for spacing
-            rowIndex = rows.length;
-            continue;
-        }
-
-        // Check for header patterns (GSTR-3B specific)
-        if (line.includes('GSTIN of the supplier')) {
-            const gstinMatch = line.match(/GSTIN of the supplier\s*([A-Z0-9]+)/);
-            if (gstinMatch) {
-                rows.push(['GSTIN:', gstinMatch[1]]);
-            }
-            continue;
-        }
-
-        if (line.includes('Legal name of the registered person')) {
-            const nameMatch = line.match(/Legal name of the registered person\s*(.+?)(?=\s*\(b\)|$)/);
-            if (nameMatch) {
-                rows.push(['Legal Name:', nameMatch[1]]);
-            }
-            continue;
-        }
-
-        if (line.includes('Date of ARN')) {
-            const dateMatch = line.match(/Date of ARN\s*([\d\/]+)/);
-            if (dateMatch) {
-                rows.push(['ARN Date:', dateMatch[1]]);
-            }
-            continue;
-        }
-
-        // Parse Table 3.1 rows - pattern: (a) Description 12345.00 12345.00 12345.00 12345.00 12345.00
-        const table31Match = line.match(/\(([a-e])\)\s+([A-Za-z\s,()]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-        if (table31Match) {
-            rows.push([
-                '3.1.' + table31Match[1],
-                table31Match[2].trim(),
-                parseFloat(table31Match[3]) || 0,
-                parseFloat(table31Match[4]) || 0,
-                parseFloat(table31Match[5]) || 0,
-                parseFloat(table31Match[6]) || 0,
-                parseFloat(table31Match[7]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Table 3.1.1 rows - pattern: (i) Description 12345.00 12345.00 12345.00 12345.00 12345.00
-        const table311Match = line.match(/\(([i]+)\)\s+([A-Za-z\s,()\[\]]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-        if (table311Match) {
-            rows.push([
-                '3.1.1.' + table311Match[1],
-                table311Match[2].trim(),
-                parseFloat(table311Match[3]) || 0,
-                parseFloat(table311Match[4]) || 0,
-                parseFloat(table311Match[5]) || 0,
-                parseFloat(table311Match[6]) || 0,
-                parseFloat(table311Match[7]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Table 3.2 rows
-        const table32Match = line.match(/Supplies made to\s+([A-Za-z\s,]+?)\s+([\d.]+)\s+([\d.]+)/);
-        if (table32Match && line.includes('3.2')) {
-            rows.push([
-                '3.2.' + table32Match[1].trim(),
-                table32Match[1].trim(),
-                parseFloat(table32Match[2]) || 0,
-                parseFloat(table32Match[3]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Table 4 - ITC rows
-        // Pattern: Description 12345.00 12345.00 12345.00 12345.00
-        const itcMatch = line.match(/^([A-Z][A-Za-z\s,.()\d]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-        if (itcMatch && (line.includes('ITC') || line.includes('Import') || line.includes('supplies'))) {
-            rows.push([
-                '4.' + itcMatch[1].trim(),
-                itcMatch[1].trim(),
-                parseFloat(itcMatch[2]) || 0,
-                parseFloat(itcMatch[3]) || 0,
-                parseFloat(itcMatch[4]) || 0,
-                parseFloat(itcMatch[5]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Table 5 rows
-        const table5Match = line.match(/(From a supplier under composition scheme|Non GST supply)\s+([\d.]+)\s+([\d.]+)/);
-        if (table5Match) {
-            rows.push([
-                '5.' + table5Match[1],
-                table5Match[1],
-                parseFloat(table5Match[2]) || 0,
-                parseFloat(table5Match[3]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Table 5.1 - Interest and Late fee
-        if (line.includes('Interest Paid') || line.includes('Late fee')) {
-            const values = line.match(/([\d.]+)/g);
-            if (values && values.length >= 4) {
-                rows.push([
-                    '5.1 ' + (line.includes('Interest') ? 'Interest' : 'Late fee'),
-                    line.includes('Interest') ? 'Interest Paid' : 'Late fee',
-                    parseFloat(values[0]) || 0,
-                    parseFloat(values[1]) || 0,
-                    parseFloat(values[2]) || 0,
-                    parseFloat(values[3]) || 0
-                ]);
-            }
-            continue;
-        }
-
-        // Parse Table 6.1 - Payment of tax
-        // Pattern: (A) Other than reverse charge Integrated tax 12345.00 12345.00 12345.00 ...
-        const paymentMatch = line.match(/\(([A-Z])\)\s+([A-Za-z\s,]+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-        if (paymentMatch) {
-            rows.push([
-                '6.1.' + paymentMatch[1] + ' ' + paymentMatch[2].trim(),
-                paymentMatch[2].trim(),
-                parseFloat(paymentMatch[3]) || 0,
-                parseFloat(paymentMatch[4]) || 0,
-                parseFloat(paymentMatch[5]) || 0,
-                parseFloat(paymentMatch[6]) || 0,
-                parseFloat(paymentMatch[7]) || 0,
-                parseFloat(paymentMatch[8]) || 0,
-                parseFloat(paymentMatch[9]) || 0
-            ]);
-            continue;
-        }
-
-        // Parse Verification
-        if (line.includes('Verification')) {
-            rows.push(['VERIFICATION']);
-            continue;
-        }
-        if (line.includes('Name of Authorized Signatory')) {
-            const signMatch = line.match(/Name of Authorized Signatory\s+(.+?)(?=\s+Designation|$)/);
-            if (signMatch) {
-                rows.push(['Signatory:', signMatch[1]]);
-            }
-            continue;
-        }
-        if (line.includes('Designation')) {
-            const desigMatch = line.match(/Designation\s*\/Status\s+(.+?)$/);
-            if (desigMatch) {
-                rows.push(['Designation:', desigMatch[1]]);
-            }
-            continue;
-        }
-    }
-
-    // If we have very few rows, try a different parsing approach - extract number patterns
-    if (rows.length < 10) {
-        return extractNumbersBySection(text);
-    }
-
-    return rows;
-}
-
-// Fallback parser - extract numbers and labels by section
-function extractNumbersBySection(text) {
-    const rows = [];
-    
-    // Find all section headers
-    const sections = text.match(/\d+\.\d+(\.\d+)?\s+[A-Za-z\s,()]+?(?=\d+\.\d+\.\d+?|$)/g);
-    
-    if (sections) {
-        sections.forEach(section => {
-            const cleanSection = section.replace(/\s+/g, ' ').trim();
-            if (cleanSection) {
-                rows.push([cleanSection]);
-            }
-        });
-    }
-
-    // Find all number patterns that look like GST values
-    const numberPatterns = text.match(/\d+\.\d+|\d{2,}(?:\.\d{2})?/g);
-    
-    // Group numbers by section
-    let currentRow = [];
-    let sectionCounter = 0;
-    
-    numberPatterns.forEach(num => {
-        currentRow.push(num);
-        if (currentRow.length >= 6) {
-            rows.push(['Row ' + (sectionCounter + 1), ...currentRow]);
-            currentRow = [];
-            sectionCounter++;
-        }
-    });
-
-    return rows;
-}
-
-// ============ EXCEL BUILDER - Single Sheet ============
-
-function buildSingleSheetWorkbook(filename, data) {
-    const sheetData = [];
-
-    // Header
-    sheetData.push(['GSTR-3B Return Data']);
-    sheetData.push(['File:', filename]);
-    sheetData.push([]);
-
-    // Add all data rows
-    data.forEach(row => {
-        if (Array.isArray(row)) {
-            sheetData.push(row);
-        } else {
-            sheetData.push([String(row)]);
-        }
-    });
-
-    const ws = XLSX.utils.aoa_to_sheet(sheetData);
-    
-    // Auto column widths
-    const maxCols = Math.max(...sheetData.map(row => Array.isArray(row) ? row.length : 1));
-    const colWidths = [];
-    for (let c = 0; c < maxCols; c++) {
-        let maxLen = 0;
-        for (let r = 0; r < sheetData.length; r++) {
-            const val = sheetData[r][c] || '';
-            maxLen = Math.max(maxLen, String(val).length);
-        }
-        colWidths.push({ wch: Math.min(Math.max(maxLen + 2, 12), 40) });
-    }
-    ws['!cols'] = colWidths;
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'GSTR-3B Data');
-    return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-}
-
-// ============ UTILITY FUNCTIONS ============
-
+/**
+ * Render per-file results summary
+ */
 function renderResults(results) {
     const icons = { ok: '✅', skip: '⚠️', error: '❌' };
     let html = '<div style="border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">';
@@ -591,6 +337,375 @@ function renderResults(results) {
     elements.resultsContainer.innerHTML = html;
 }
 
+/**
+ * Core per-PDF conversion.
+ *
+ * Approach (matches how general-purpose PDF-to-Excel converters like
+ * iLovePDF do it): render the page, detect ruling lines from the actual
+ * pixels, build ONE grid per page from the union of all detected lines,
+ * and bucket every text item into whichever grid cell it falls in. This
+ * deliberately does not try to detect separate table regions — a page
+ * with several differently-shaped tables just produces a wider grid with
+ * blank filler cells, same as iLovePDF's output. That's a trade of some
+ * neatness for reliability: it doesn't depend on subtle per-table
+ * boundary logic that's easy to get subtly wrong.
+ *
+ * If a page has no detectable grid lines at all (e.g. a borderless
+ * return type), it falls back to the text-position label/value-token
+ * parser further down in this file.
+ */
+async function convertSinglePdf(file) {
+    const buffer = await file.arrayBuffer();
+    let pdf;
+
+    try {
+        pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+    } catch (err) {
+        if (err && err.name === 'PasswordException') {
+            throw new Error('Password-protected PDF — not supported yet. Please remove the password and re-upload.');
+        }
+        throw new Error('Could not read PDF: ' + (err && err.message ? err.message : 'unknown error'));
+    }
+
+    let fullText = '';
+    const allRows = [];
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+
+        const items = textContent.items
+            .filter(it => it.str && it.str.trim().length)
+            .map(it => ({
+                str: it.str,
+                x: it.transform[4],
+                y: it.transform[5],
+                // transform[3] approximates rendered font size for unrotated text
+                fontSize: Math.abs(it.transform[3]) || 0
+            }))
+            .filter(it => it.fontSize < WATERMARK_FONT_SIZE);
+
+        if (items.length === 0) continue;
+
+        fullText += ' ' + items.map(i => i.str).join(' ');
+
+        // 1) Render the page and detect grid lines from the actual pixels.
+        let gridEntries = [];
+        let consumed = new Set();
+
+        try {
+            const { rowYsPdf, colXsPdf } = await detectPageGridLines(page);
+            console.log(`[gst-pdf-to-excel] page ${pageNum}: detected ${rowYsPdf.length} row lines, ${colXsPdf.length} column lines`);
+
+            const bucketResult = bucketRowsFromGrid(items, rowYsPdf, colXsPdf);
+            gridEntries = bucketResult.grid;
+            consumed = bucketResult.consumed;
+        } catch (err) {
+            console.warn('Grid-line detection failed on page ' + pageNum + ', using text-position fallback:', err);
+            gridEntries = [];
+            consumed = new Set();
+        }
+
+        // 2) Anything not captured by the grid (no lines detected at all, or a
+        //    text item that fell outside every detected row/column band)
+        //    still goes through the label/value-token fallback so nothing is lost.
+        const leftoverItems = items.filter((_, idx) => !consumed.has(idx));
+        const fallbackGroups = clusterRows(leftoverItems);
+        const fallbackEntries = fallbackGroups.map(rowItems => ({
+            y: Math.max(...rowItems.map(it => it.y)),
+            cells: buildRowCells(rowItems)
+        }));
+
+        // 3) Merge both sources back into top-to-bottom reading order
+        const combined = [...gridEntries, ...fallbackEntries].sort((a, b) => b.y - a.y);
+        combined.forEach(entry => allRows.push(entry.cells));
+    }
+
+    const profile = detectProfile(fullText);
+    return { profile, rows: allRows };
+}
+
+/**
+ * Render a page to an offscreen canvas and scan its pixels for long
+ * contiguous dark runs — these are the page's ruling lines and filled
+ * cell/header borders. This deliberately avoids parsing pdf.js's internal
+ * operator-list format (which caused problems previously) in favour of
+ * pdf.js's core, stable render() API plus plain pixel scanning.
+ *
+ * Returns line positions in PDF user-space coordinates (via pdf.js's
+ * built-in viewport.convertToPdfPoint), so they line up directly with
+ * text item positions from getTextContent().
+ */
+async function detectPageGridLines(page) {
+    const viewport = page.getViewport({ scale: RENDER_SCALE });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    function isDark(px, py) {
+        const idx = (py * width + px) * 4;
+        if (data[idx + 3] === 0) return false; // fully transparent
+        return (data[idx] + data[idx + 1] + data[idx + 2]) / 3 < DARK_THRESHOLD;
+    }
+
+    const minRunPx = Math.round(MIN_LINE_LENGTH_PT * RENDER_SCALE);
+
+    // Horizontal candidates: rows where some contiguous run of dark pixels is long enough
+    const rowPixelHits = [];
+    for (let y = 0; y < height; y++) {
+        let runStart = -1;
+        let bestRun = 0;
+        for (let x = 0; x < width; x++) {
+            if (isDark(x, y)) {
+                if (runStart === -1) runStart = x;
+            } else if (runStart !== -1) {
+                bestRun = Math.max(bestRun, x - runStart);
+                runStart = -1;
+            }
+        }
+        if (runStart !== -1) bestRun = Math.max(bestRun, width - runStart);
+        if (bestRun >= minRunPx) rowPixelHits.push(y);
+    }
+
+    // Vertical candidates: columns where some contiguous run of dark pixels is long enough
+    const colPixelHits = [];
+    for (let x = 0; x < width; x++) {
+        let runStart = -1;
+        let bestRun = 0;
+        for (let y = 0; y < height; y++) {
+            if (isDark(x, y)) {
+                if (runStart === -1) runStart = y;
+            } else if (runStart !== -1) {
+                bestRun = Math.max(bestRun, y - runStart);
+                runStart = -1;
+            }
+        }
+        if (runStart !== -1) bestRun = Math.max(bestRun, height - runStart);
+        if (bestRun >= minRunPx) colPixelHits.push(x);
+    }
+
+    const rowYsPdf = mergePixelRuns(rowPixelHits).map(py => viewport.convertToPdfPoint(0, py)[1]);
+    const colXsPdf = mergePixelRuns(colPixelHits).map(px => viewport.convertToPdfPoint(px, 0)[0]);
+
+    return { rowYsPdf, colXsPdf };
+}
+
+/**
+ * Collapse consecutive/near-adjacent pixel rows or columns (a real line is
+ * usually a few pixels thick) into one representative coordinate each.
+ */
+function mergePixelRuns(sortedPixelCoords) {
+    const merged = [];
+    let group = [];
+
+    sortedPixelCoords.forEach(v => {
+        if (group.length === 0 || v - group[group.length - 1] <= 2) {
+            group.push(v);
+        } else {
+            merged.push(Math.round(group.reduce((a, b) => a + b, 0) / group.length));
+            group = [v];
+        }
+    });
+    if (group.length) merged.push(Math.round(group.reduce((a, b) => a + b, 0) / group.length));
+
+    return merged;
+}
+
+/**
+ * Build one page-wide grid from the union of all detected row/column
+ * lines, then bucket every text item into whichever cell it falls in —
+ * same "one shared grid, leave blanks" approach as iLovePDF. No attempt
+ * is made to detect separate table regions.
+ */
+function bucketRowsFromGrid(items, rowYsPdf, colXsPdf) {
+    if (rowYsPdf.length < 2 || colXsPdf.length < 2) {
+        return { grid: [], consumed: new Set() };
+    }
+
+    const rowBoundaries = [...new Set(rowYsPdf.map(v => Math.round(v * 10) / 10))].sort((a, b) => b - a);
+    const colBoundaries = [...new Set(colXsPdf.map(v => Math.round(v * 10) / 10))].sort((a, b) => a - b);
+
+    const grid = [];
+    const consumed = new Set();
+
+    for (let r = 0; r < rowBoundaries.length - 1; r++) {
+        const top = rowBoundaries[r];
+        const bottom = rowBoundaries[r + 1];
+        if (top - bottom < 2) continue; // skip degenerate near-zero-height strips
+
+        const rowCells = new Array(colBoundaries.length - 1).fill('');
+        let any = false;
+
+        items.forEach((item, idx) => {
+            if (item.y > top + GRID_MATCH_TOLERANCE || item.y < bottom - GRID_MATCH_TOLERANCE) return;
+
+            let colIdx = -1;
+            for (let c = 0; c < colBoundaries.length - 1; c++) {
+                if (item.x >= colBoundaries[c] - GRID_MATCH_TOLERANCE && item.x < colBoundaries[c + 1] + GRID_MATCH_TOLERANCE) {
+                    colIdx = c;
+                    break;
+                }
+            }
+            if (colIdx === -1) return;
+
+            rowCells[colIdx] = rowCells[colIdx] ? rowCells[colIdx] + ' ' + item.str.trim() : item.str.trim();
+            consumed.add(idx);
+            any = true;
+        });
+
+        if (any) {
+            grid.push({ y: top, cells: rowCells.map(parseCellValue) });
+        }
+    }
+
+    return { grid, consumed };
+}
+
+/**
+ * Group text items into rows based on shared y-coordinate (PDF y-axis: higher = further up the page)
+ */
+function clusterRows(items) {
+    const sorted = [...items].sort((a, b) => b.y - a.y);
+    const rows = [];
+    let currentRow = [];
+    let currentY = null;
+
+    sorted.forEach(item => {
+        if (currentY === null || Math.abs(item.y - currentY) <= ROW_Y_TOLERANCE) {
+            currentRow.push(item);
+            currentY = currentY === null ? item.y : (currentY + item.y) / 2;
+        } else {
+            currentRow.sort((a, b) => a.x - b.x);
+            rows.push(currentRow);
+            currentRow = [item];
+            currentY = item.y;
+        }
+    });
+
+    if (currentRow.length) {
+        currentRow.sort((a, b) => a.x - b.x);
+        rows.push(currentRow);
+    }
+    return rows;
+}
+
+/**
+ * Split a row's text items into [label, value1, value2, ...].
+ *
+ * Rationale: page-wide x-position clustering does not hold up on real GST
+ * PDFs, because wrapped label text starts at wildly different x-offsets
+ * across different rows, filling in the gaps that would otherwise separate
+ * "true" columns. Numbers, however, are a reliable signal — GST tables are
+ * consistently "description, then N right-hand values" — so we walk each
+ * row left to right, treat everything before the first value-looking token
+ * as the label, and place every value-looking token after that in order.
+ *
+ * The row's very first token is never treated as a value, even if it looks
+ * numeric — this avoids misreading leading section numbers like "3.1" or
+ * "5.1" in a heading as a data value. A numeric token appearing later in a
+ * sentence (e.g. a cross-reference to another section number) can still be
+ * misread this way; that's a known residual limitation worth a manual check.
+ */
+function buildRowCells(rowItems) {
+    const label = [];
+    const values = [];
+    let seenValue = false;
+
+    rowItems.forEach((item, idx) => {
+        const raw = item.str.trim();
+        if (!raw) return;
+
+        const treatAsValue = idx > 0 && isValueToken(raw);
+
+        if (treatAsValue) {
+            seenValue = true;
+            values.push(parseCellValue(raw));
+        } else if (seenValue) {
+            // Text appearing after values have started (rare — e.g. a wrapped
+            // heading that happens to contain an early number). Keep it as
+            // its own trailing cell rather than losing it.
+            values.push(raw);
+        } else {
+            label.push(raw);
+        }
+    });
+
+    return [label.join(' '), ...values];
+}
+
+/**
+ * Does this token look like a table value (a number, a "-" placeholder,
+ * or a number with a single stray leading letter from a font-encoding
+ * artifact — see parseCellValue)?
+ */
+function isValueToken(raw) {
+    if (raw === '-') return true;
+    if (/^\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
+    if (/^[A-Za-z]\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
+    return false;
+}
+
+/**
+ * Convert Indian-formatted numbers (e.g. "1,23,456.00", "(500.00)") into real numbers where possible
+ */
+function parseCellValue(str) {
+    if (!str) return '';
+    let trimmed = str.trim();
+    if (trimmed === '-') return '-';
+
+    // Some GST portal PDFs embed a font that mis-maps the ₹ symbol to a
+    // stray Latin letter glued directly onto the number (e.g. "L955067.25").
+    // Strip a single leading letter immediately followed by a number.
+    const strayLetterMatch = trimmed.match(/^[A-Za-z](\(?-?[\d,]+(\.\d+)?\)?)$/);
+    if (strayLetterMatch) trimmed = strayLetterMatch[1];
+
+    const looksNumeric = /^\(?-?[\d,]+(\.\d+)?\)?$/.test(trimmed);
+
+    if (looksNumeric) {
+        const negative = trimmed.startsWith('(') && trimmed.endsWith(')');
+        const cleaned = trimmed.replace(/[(),]/g, '').replace(/^-/, '');
+        const num = parseFloat(cleaned);
+        if (!isNaN(num)) return negative ? -num : num;
+    }
+    return trimmed;
+}
+
+/**
+ * Identify return type from extracted text (label only — does not change parsing logic)
+ */
+function detectProfile(fullText) {
+    for (const p of RETURN_PROFILES) {
+        if (p.match.some(re => re.test(fullText))) {
+            return { key: p.key, label: p.label };
+        }
+    }
+    return { key: 'UNKNOWN', label: 'Unrecognized / Generic (review carefully)' };
+}
+
+/**
+ * Build an .xlsx ArrayBuffer for one converted PDF
+ */
+function buildWorkbook(filename, profile, rows) {
+    const sheetData = [
+        ['Source File:', filename],
+        ['Detected Return Type:', profile.label],
+        [],
+        ...rows
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Data');
+    return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+
+/**
+ * Utility functions
+ */
 function escapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
