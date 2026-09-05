@@ -6,20 +6,25 @@
  * ========================================
  *
  * NOTE ON ACCURACY:
- * Table reconstruction from PDF text is heuristic (position-based
- * clustering), not a guaranteed 1:1 extraction. It works best on
- * clean, text-based (non-scanned) PDFs like those downloaded directly
- * from the GST portal. Always spot-check output before relying on it.
+ * Tables are reconstructed from text position: items on the same visual
+ * line are grouped into a row, then merged into cells based on horizontal
+ * gaps, with a second pass that re-merges rows that are really just a
+ * wrapped continuation of the row above (a label or number that spilled
+ * onto a second line). This is heuristic, not a guaranteed 1:1 extraction,
+ * and works best on clean, text-based (non-scanned) PDFs like those
+ * downloaded directly from the GST portal. Always spot-check output
+ * before relying on it.
  */
 
 // ---- Tunable heuristics (adjust based on real-world GST PDF testing) ----
-const ROW_Y_TOLERANCE = 3;          // px difference to treat two text items as same row (fallback path only)
+const ROW_Y_TOLERANCE = 5;          // pt distance to group text items into the same visual row
+const CELL_X_GAP_THRESHOLD = 6;     // pt gap between adjacent fragments in a row; below this, they merge into one cell
+                                     // (kept tight: label words sit ~2pt apart, but adjacent numeric columns can sit as
+                                     // close as ~9-10pt apart — too high a threshold glues separate columns together)
+const WRAP_MAX_GAP = 12;            // pt vertical gap above which a row is treated as new (not a wrapped continuation)
+const CELL_ALIGN_TOLERANCE = 20;    // pt tolerance when matching a wrapped row's cell to a column in the row above
 const WATERMARK_FONT_SIZE = 40;     // items rendered at/above this size are treated as a stamp/watermark, not table content
                                      // (portal "FILED" stamps in sample PDFs render at ~117-167pt vs ~8-18pt for real text)
-const RENDER_SCALE = 2;             // canvas render resolution multiplier for line detection (higher = more accurate, slower)
-const DARK_THRESHOLD = 200;         // average RGB below this is treated as "ink" when scanning for lines (0=black, 255=white)
-const MIN_LINE_LENGTH_PT = 30;      // a contiguous dark pixel run must span at least this many PDF points to count as a ruling line
-const GRID_MATCH_TOLERANCE = 1.5;   // pt tolerance when bucketing a text item into a detected grid row/column
 const PDFJS_VERSION = '3.11.174';
 const PDFJS_LIB_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
@@ -51,9 +56,8 @@ export function getToolHTML() {
                 Each PDF is converted to its own Excel file, packaged together as a .zip.
             </p>
             <p style="font-size:0.8rem;color:#b58b00;margin-bottom:1rem;">
-                ⚠️ Tables are reconstructed by detecting the PDF's own ruling lines (like most PDF-to-Excel tools do),
-                building one grid per page. Different tables on the same page may share a wider grid with some
-                blank filler cells — please review output before relying on it.
+                ⚠️ Tables are reconstructed from text position (row grouping + gap-based column merging), with wrapped
+                text automatically re-joined into a single cell. Please review output before relying on it.
             </p>
 
             <div style="border:2px dashed #94A3B8;border-radius:1.25rem;padding:1.5rem;background:#FEFEFE;margin-bottom:1rem;">
@@ -354,6 +358,19 @@ function renderResults(results) {
  * return type), it falls back to the text-position label/value-token
  * parser further down in this file.
  */
+/**
+ * Core per-PDF conversion.
+ *
+ * Approach: group text items into rows by shared y-coordinate, then within
+ * each row merge horizontally-adjacent fragments into a single cell
+ * whenever the gap between them is small (this is what actually reproduces
+ * table columns — no page-wide clustering, no ruling-line detection, just
+ * per-row adjacency, which is far more robust in practice). Then, as a
+ * second pass, detect rows that are really just a WRAPPED continuation of
+ * the row above (a label or number that spilled onto a second visual line
+ * inside the same cell) and merge them back together so wrapped content
+ * doesn't end up as a spurious extra row.
+ */
 async function convertSinglePdf(file) {
     const buffer = await file.arrayBuffer();
     let pdf;
@@ -380,6 +397,7 @@ async function convertSinglePdf(file) {
                 str: it.str,
                 x: it.transform[4],
                 y: it.transform[5],
+                width: it.width || 0,
                 // transform[3] approximates rendered font size for unrotated text
                 fontSize: Math.abs(it.transform[3]) || 0
             }))
@@ -389,36 +407,13 @@ async function convertSinglePdf(file) {
 
         fullText += ' ' + items.map(i => i.str).join(' ');
 
-        // 1) Render the page and detect grid lines from the actual pixels.
-        let gridEntries = [];
-        let consumed = new Set();
+        const rowGroups = groupItemsIntoRows(items);
+        const rawRows = rowGroups.map(g => ({ y: g.y, cells: mergeRowItemsIntoCells(g.items) }));
+        const mergedRows = mergeWrappedRows(rawRows);
 
-        try {
-            const { rowYsPdf, colXsPdf } = await detectPageGridLines(page);
-            console.log(`[gst-pdf-to-excel] page ${pageNum}: detected ${rowYsPdf.length} row lines, ${colXsPdf.length} column lines`);
-
-            const bucketResult = bucketRowsFromGrid(items, rowYsPdf, colXsPdf);
-            gridEntries = bucketResult.grid;
-            consumed = bucketResult.consumed;
-        } catch (err) {
-            console.warn('Grid-line detection failed on page ' + pageNum + ', using text-position fallback:', err);
-            gridEntries = [];
-            consumed = new Set();
-        }
-
-        // 2) Anything not captured by the grid (no lines detected at all, or a
-        //    text item that fell outside every detected row/column band)
-        //    still goes through the label/value-token fallback so nothing is lost.
-        const leftoverItems = items.filter((_, idx) => !consumed.has(idx));
-        const fallbackGroups = clusterRows(leftoverItems);
-        const fallbackEntries = fallbackGroups.map(rowItems => ({
-            y: Math.max(...rowItems.map(it => it.y)),
-            cells: buildRowCells(rowItems)
-        }));
-
-        // 3) Merge both sources back into top-to-bottom reading order
-        const combined = [...gridEntries, ...fallbackEntries].sort((a, b) => b.y - a.y);
-        combined.forEach(entry => allRows.push(entry.cells));
+        mergedRows.forEach(r => {
+            allRows.push(r.cells.map(c => parseCellValue(c.text)));
+        });
     }
 
     const profile = detectProfile(fullText);
@@ -426,229 +421,130 @@ async function convertSinglePdf(file) {
 }
 
 /**
- * Render a page to an offscreen canvas and scan its pixels for long
- * contiguous dark runs — these are the page's ruling lines and filled
- * cell/header borders. This deliberately avoids parsing pdf.js's internal
- * operator-list format (which caused problems previously) in favour of
- * pdf.js's core, stable render() API plus plain pixel scanning.
- *
- * Returns line positions in PDF user-space coordinates (via pdf.js's
- * built-in viewport.convertToPdfPoint), so they line up directly with
- * text item positions from getTextContent().
+ * Group text items into rows based on shared y-coordinate
+ * (PDF y-axis: higher = further up the page).
  */
-async function detectPageGridLines(page) {
-    const viewport = page.getViewport({ scale: RENDER_SCALE });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+function groupItemsIntoRows(items) {
+    const rows = []; // { y, items: [] }, y = the row's first-seen y (representative)
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
-
-    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-    function isDark(px, py) {
-        const idx = (py * width + px) * 4;
-        if (data[idx + 3] === 0) return false; // fully transparent
-        return (data[idx] + data[idx + 1] + data[idx + 2]) / 3 < DARK_THRESHOLD;
-    }
-
-    const minRunPx = Math.round(MIN_LINE_LENGTH_PT * RENDER_SCALE);
-
-    // Horizontal candidates: rows where some contiguous run of dark pixels is long enough
-    const rowPixelHits = [];
-    for (let y = 0; y < height; y++) {
-        let runStart = -1;
-        let bestRun = 0;
-        for (let x = 0; x < width; x++) {
-            if (isDark(x, y)) {
-                if (runStart === -1) runStart = x;
-            } else if (runStart !== -1) {
-                bestRun = Math.max(bestRun, x - runStart);
-                runStart = -1;
-            }
-        }
-        if (runStart !== -1) bestRun = Math.max(bestRun, width - runStart);
-        if (bestRun >= minRunPx) rowPixelHits.push(y);
-    }
-
-    // Vertical candidates: columns where some contiguous run of dark pixels is long enough
-    const colPixelHits = [];
-    for (let x = 0; x < width; x++) {
-        let runStart = -1;
-        let bestRun = 0;
-        for (let y = 0; y < height; y++) {
-            if (isDark(x, y)) {
-                if (runStart === -1) runStart = y;
-            } else if (runStart !== -1) {
-                bestRun = Math.max(bestRun, y - runStart);
-                runStart = -1;
-            }
-        }
-        if (runStart !== -1) bestRun = Math.max(bestRun, height - runStart);
-        if (bestRun >= minRunPx) colPixelHits.push(x);
-    }
-
-    const rowYsPdf = mergePixelRuns(rowPixelHits).map(py => viewport.convertToPdfPoint(0, py)[1]);
-    const colXsPdf = mergePixelRuns(colPixelHits).map(px => viewport.convertToPdfPoint(px, 0)[0]);
-
-    return { rowYsPdf, colXsPdf };
-}
-
-/**
- * Collapse consecutive/near-adjacent pixel rows or columns (a real line is
- * usually a few pixels thick) into one representative coordinate each.
- */
-function mergePixelRuns(sortedPixelCoords) {
-    const merged = [];
-    let group = [];
-
-    sortedPixelCoords.forEach(v => {
-        if (group.length === 0 || v - group[group.length - 1] <= 2) {
-            group.push(v);
+    items.forEach(item => {
+        const existing = rows.find(r => Math.abs(r.y - item.y) <= ROW_Y_TOLERANCE);
+        if (existing) {
+            existing.items.push(item);
         } else {
-            merged.push(Math.round(group.reduce((a, b) => a + b, 0) / group.length));
-            group = [v];
+            rows.push({ y: item.y, items: [item] });
         }
     });
-    if (group.length) merged.push(Math.round(group.reduce((a, b) => a + b, 0) / group.length));
 
-    return merged;
+    return rows.sort((a, b) => b.y - a.y); // top to bottom
 }
 
 /**
- * Build one page-wide grid from the union of all detected row/column
- * lines, then bucket every text item into whichever cell it falls in —
- * same "one shared grid, leave blanks" approach as iLovePDF. No attempt
- * is made to detect separate table regions.
+ * Within one row, merge horizontally-adjacent text fragments into a single
+ * cell whenever the gap between them is small — this is what reconstructs
+ * table columns without needing page-wide clustering or drawn ruling lines.
+ * Returns cells as {x, text} so later wrap-merging can align by position.
  */
-function bucketRowsFromGrid(items, rowYsPdf, colXsPdf) {
-    if (rowYsPdf.length < 2 || colXsPdf.length < 2) {
-        return { grid: [], consumed: new Set() };
+function mergeRowItemsIntoCells(rowItems) {
+    const sorted = [...rowItems].sort((a, b) => a.x - b.x);
+    const cells = [];
+
+    let current = { x: sorted[0].x, endX: sorted[0].x + sorted[0].width, text: sorted[0].str };
+
+    for (let i = 1; i < sorted.length; i++) {
+        const next = sorted[i];
+        const gap = next.x - current.endX;
+
+        if (gap <= CELL_X_GAP_THRESHOLD) {
+            current.text = joinCellText(current.text, next.str);
+            current.endX = Math.max(current.endX, next.x + next.width);
+        } else {
+            cells.push({ x: current.x, endX: current.endX, text: current.text.trim() });
+            current = { x: next.x, endX: next.x + next.width, text: next.str };
+        }
     }
+    cells.push({ x: current.x, endX: current.endX, text: current.text.trim() });
 
-    const rowBoundaries = [...new Set(rowYsPdf.map(v => Math.round(v * 10) / 10))].sort((a, b) => b - a);
-    const colBoundaries = [...new Set(colXsPdf.map(v => Math.round(v * 10) / 10))].sort((a, b) => a - b);
+    return cells;
+}
 
-    const grid = [];
-    const consumed = new Set();
+/**
+ * Join two adjacent text fragments. A number split across two fragments
+ * (e.g. "2691674." + "00") is joined with no space so it parses back into
+ * one value; everything else gets a single separating space.
+ */
+function joinCellText(a, b) {
+    const numericBoundary = /[\d,.\-]$/.test(a) && /^\d/.test(b);
+    if (numericBoundary) return a + b;
+    const needsSpace = !a.endsWith(' ') && !b.startsWith(' ');
+    return a + (needsSpace ? ' ' : '') + b;
+}
 
-    for (let r = 0; r < rowBoundaries.length - 1; r++) {
-        const top = rowBoundaries[r];
-        const bottom = rowBoundaries[r + 1];
-        if (top - bottom < 2) continue; // skip degenerate near-zero-height strips
+/**
+ * Second pass: merge a row into the row above it when the row is really
+ * just a WRAPPED continuation of the same table cell(s) — e.g. a label
+ * that spilled onto a second line ("...nil rated" / "and exempted)"), or
+ * a number a narrow column wrapped mid-digit ("2691674." / "00").
+ *
+ * Heuristic: a row is treated as a wrap of the previous row when (a) the
+ * vertical gap between them is small — smaller than the typical gap
+ * between two genuinely different table rows — and (b) at least one of
+ * its cells sits at roughly the same x-position as a cell in the row
+ * above (i.e. it's continuing the same column, not starting a new one).
+ * This is heuristic and can occasionally over- or under-merge on unusual
+ * layouts — worth spot-checking output, especially on tightly-spaced
+ * tables. Tune WRAP_MAX_GAP / CELL_ALIGN_TOLERANCE if needed.
+ */
+function mergeWrappedRows(rawRows) {
+    const output = [];
 
-        const rowCells = new Array(colBoundaries.length - 1).fill('');
-        let any = false;
+    rawRows.forEach(row => {
+        const prev = output[output.length - 1];
 
-        items.forEach((item, idx) => {
-            if (item.y > top + GRID_MATCH_TOLERANCE || item.y < bottom - GRID_MATCH_TOLERANCE) return;
+        if (prev) {
+            const gap = prev.y - row.y; // positive since rows are sorted top to bottom
+            if (gap > 0 && gap <= WRAP_MAX_GAP) {
+                const consumedPrevIdx = new Set();
+                const matches = row.cells.map(cell => {
+                    let bestIdx = -1;
+                    let bestDist = Infinity;
+                    prev.cells.forEach((pc, idx) => {
+                        if (consumedPrevIdx.has(idx)) return;
+                        // Try both start-aligned (left-aligned label text) and
+                        // end-aligned (right-aligned numbers) matching, take whichever is closer.
+                        const dist = Math.min(Math.abs(pc.x - cell.x), Math.abs(pc.endX - cell.endX));
+                        if (dist <= CELL_ALIGN_TOLERANCE && dist < bestDist) {
+                            bestDist = dist;
+                            bestIdx = idx;
+                        }
+                    });
+                    if (bestIdx !== -1) consumedPrevIdx.add(bestIdx);
+                    return { cell, prevIdx: bestIdx };
+                });
 
-            let colIdx = -1;
-            for (let c = 0; c < colBoundaries.length - 1; c++) {
-                if (item.x >= colBoundaries[c] - GRID_MATCH_TOLERANCE && item.x < colBoundaries[c + 1] + GRID_MATCH_TOLERANCE) {
-                    colIdx = c;
-                    break;
+                const anyAligned = matches.some(m => m.prevIdx !== -1);
+
+                if (anyAligned) {
+                    matches.forEach(({ cell, prevIdx }) => {
+                        if (prevIdx !== -1) {
+                            prev.cells[prevIdx].text = joinCellText(prev.cells[prevIdx].text, cell.text);
+                        } else {
+                            // No aligned column above — keep the content as a trailing cell rather than lose it
+                            prev.cells.push(cell);
+                        }
+                    });
+                    prev.y = row.y; // allows a 3rd+ wrapped line to keep chaining onto the same merged row
+                    return; // row consumed into prev — do not push as a new row
                 }
             }
-            if (colIdx === -1) return;
-
-            rowCells[colIdx] = rowCells[colIdx] ? rowCells[colIdx] + ' ' + item.str.trim() : item.str.trim();
-            consumed.add(idx);
-            any = true;
-        });
-
-        if (any) {
-            grid.push({ y: top, cells: rowCells.map(parseCellValue) });
         }
-    }
 
-    return { grid, consumed };
-}
-
-/**
- * Group text items into rows based on shared y-coordinate (PDF y-axis: higher = further up the page)
- */
-function clusterRows(items) {
-    const sorted = [...items].sort((a, b) => b.y - a.y);
-    const rows = [];
-    let currentRow = [];
-    let currentY = null;
-
-    sorted.forEach(item => {
-        if (currentY === null || Math.abs(item.y - currentY) <= ROW_Y_TOLERANCE) {
-            currentRow.push(item);
-            currentY = currentY === null ? item.y : (currentY + item.y) / 2;
-        } else {
-            currentRow.sort((a, b) => a.x - b.x);
-            rows.push(currentRow);
-            currentRow = [item];
-            currentY = item.y;
-        }
+        output.push({ y: row.y, cells: row.cells.map(c => ({ ...c })) });
     });
 
-    if (currentRow.length) {
-        currentRow.sort((a, b) => a.x - b.x);
-        rows.push(currentRow);
-    }
-    return rows;
+    return output;
 }
 
-/**
- * Split a row's text items into [label, value1, value2, ...].
- *
- * Rationale: page-wide x-position clustering does not hold up on real GST
- * PDFs, because wrapped label text starts at wildly different x-offsets
- * across different rows, filling in the gaps that would otherwise separate
- * "true" columns. Numbers, however, are a reliable signal — GST tables are
- * consistently "description, then N right-hand values" — so we walk each
- * row left to right, treat everything before the first value-looking token
- * as the label, and place every value-looking token after that in order.
- *
- * The row's very first token is never treated as a value, even if it looks
- * numeric — this avoids misreading leading section numbers like "3.1" or
- * "5.1" in a heading as a data value. A numeric token appearing later in a
- * sentence (e.g. a cross-reference to another section number) can still be
- * misread this way; that's a known residual limitation worth a manual check.
- */
-function buildRowCells(rowItems) {
-    const label = [];
-    const values = [];
-    let seenValue = false;
-
-    rowItems.forEach((item, idx) => {
-        const raw = item.str.trim();
-        if (!raw) return;
-
-        const treatAsValue = idx > 0 && isValueToken(raw);
-
-        if (treatAsValue) {
-            seenValue = true;
-            values.push(parseCellValue(raw));
-        } else if (seenValue) {
-            // Text appearing after values have started (rare — e.g. a wrapped
-            // heading that happens to contain an early number). Keep it as
-            // its own trailing cell rather than losing it.
-            values.push(raw);
-        } else {
-            label.push(raw);
-        }
-    });
-
-    return [label.join(' '), ...values];
-}
-
-/**
- * Does this token look like a table value (a number, a "-" placeholder,
- * or a number with a single stray leading letter from a font-encoding
- * artifact — see parseCellValue)?
- */
-function isValueToken(raw) {
-    if (raw === '-') return true;
-    if (/^\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
-    if (/^[A-Za-z]\(?-?[\d,]+(\.\d+)?\)?$/.test(raw)) return true;
-    return false;
-}
 
 /**
  * Convert Indian-formatted numbers (e.g. "1,23,456.00", "(500.00)") into real numbers where possible
