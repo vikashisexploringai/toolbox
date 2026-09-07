@@ -81,13 +81,13 @@ const TOOLS = [
         tag: 'Stable',
         scriptPath: 'tools/html-saver/saver.js'
     },
-    {
-    id: 'gst-pdf-to-excel',
-    icon: '🧾',
-    name: 'GST Returns to Excel',
-    description: 'Upload multiple GST return PDFs (GSTR-1, 3B, 2A/2B, 9, etc.), get one Excel file per PDF back in a zip.',
+ {
+    id: 'gstr3b-to-excel',
+    icon: '📋',
+    name: 'GSTR-3B to Excel',
+    description: 'Upload GSTR-3B PDF(s) downloaded from the GST portal. Converts to Excel in the exact GSTR-3B format with all values extracted to the correct cells.',
     tag: 'New',
-    scriptPath: 'tools/gst-pdf-to-excel/converter.js'
+    scriptPath: 'tools/gstr3b-to-excel/converter.js'
 }
 ];
 
