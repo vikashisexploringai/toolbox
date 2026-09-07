@@ -346,18 +346,16 @@ const GSTR3B_MAPPING = {
 class GSTR3BConverter {
     constructor() {
         this.pdfjsLib = null;
+        this.librariesLoaded = false;
     }
 
     async loadLibraries() {
-        if (!this.pdfjsLib) {
-            await this.loadPDFJS();
-        }
-        if (!window.XLSX) {
-            await this.loadXLSX();
-        }
-        if (!window.JSZip) {
-            await this.loadJSZip();
-        }
+        if (this.librariesLoaded) return;
+        
+        await this.loadPDFJS();
+        await this.loadXLSX();
+        await this.loadJSZip();
+        this.librariesLoaded = true;
     }
 
     loadPDFJS() {
@@ -388,7 +386,13 @@ class GSTR3BConverter {
             if (window.XLSX) return resolve();
             const script = document.createElement('script');
             script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-            script.onload = () => window.XLSX ? resolve() : reject(new Error('XLSX failed to load'));
+            script.onload = () => {
+                if (window.XLSX) {
+                    resolve();
+                } else {
+                    reject(new Error('XLSX failed to load'));
+                }
+            };
             script.onerror = () => reject(new Error('Failed to load XLSX'));
             document.head.appendChild(script);
         });
@@ -399,7 +403,13 @@ class GSTR3BConverter {
             if (window.JSZip) return resolve();
             const script = document.createElement('script');
             script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-            script.onload = () => window.JSZip ? resolve() : reject(new Error('JSZip failed to load'));
+            script.onload = () => {
+                if (window.JSZip) {
+                    resolve();
+                } else {
+                    reject(new Error('JSZip failed to load'));
+                }
+            };
             script.onerror = () => reject(new Error('Failed to load JSZip'));
             document.head.appendChild(script);
         });
@@ -703,22 +713,22 @@ class GSTR3BConverter {
                 data.PaymentIntegratedTax || '',
                 '',
                 '',
-                data.PaymentITCIntegratedTax || '',
-                data.PaymentITCCentralTax || '',
                 '',
                 '',
-                data.PaymentCashIntegratedTax || '',
-                data.PaymentInterestCash || '',
-                data.PaymentLateFeeCash || ''],
+                '',
+                '',
+                '',
+                '',
+                ''],
             ['Central tax',
                 data.PaymentCentralTax || '',
                 '',
                 '',
                 '',
-                data.PaymentITCCentralTax || '',
                 '',
                 '',
-                data.PaymentCashCentralTax || '',
+                '',
+                '',
                 '',
                 ''],
             ['State/UT tax',
@@ -727,9 +737,9 @@ class GSTR3BConverter {
                 '',
                 '',
                 '',
-                data.PaymentITCStateTax || '',
                 '',
-                data.PaymentCashStateTax || '',
+                '',
+                '',
                 '',
                 ''],
             ['Cess',
@@ -739,8 +749,8 @@ class GSTR3BConverter {
                 '',
                 '',
                 '',
-                data.PaymentITCCess || '',
-                data.PaymentCashCess || '',
+                '',
+                '',
                 '',
                 ''],
             ['(B) Reverse charge and supplies made u/s 9(5)', '', '', '', '', '', '', '', '', '', ''],
@@ -774,6 +784,7 @@ class GSTR3BConverter {
 // ---- UI Integration ----
 let gstr3bFiles = [];
 let gstr3bElements = {};
+let converterInstance = null;
 
 export function getToolHTML() {
     return `
@@ -834,6 +845,11 @@ export function initTool() {
     };
 
     gstr3bFiles = [];
+    converterInstance = new GSTR3BConverter();
+    
+    // Pre-load libraries in background
+    converterInstance.loadLibraries().catch(e => console.warn('Library preload warning:', e));
+    
     setupFileInput();
     setupGenerateButton();
     renderFileList();
@@ -909,12 +925,21 @@ async function generateAll() {
     }
 
     gstr3bElements.generateBtn.disabled = true;
-    gstr3bElements.generateBtn.textContent = '⏳ Converting...';
+    gstr3bElements.generateBtn.textContent = '⏳ Loading libraries...';
     gstr3bElements.downloadContainer.style.display = 'none';
     gstr3bElements.resultsContainer.innerHTML = '';
-    setStatus('⏳ Preparing to convert GSTR-3B files...', 'info');
+    setStatus('⏳ Loading required libraries...', 'info');
 
-    const converter = new GSTR3BConverter();
+    try {
+        // Ensure libraries are loaded
+        await converterInstance.loadLibraries();
+    } catch (err) {
+        setStatus('❌ Could not load required libraries: ' + err.message, 'error');
+        gstr3bElements.generateBtn.disabled = false;
+        renderFileList();
+        return;
+    }
+
     const outZip = new JSZip();
     const usedNames = new Set();
     const results = [];
@@ -924,7 +949,7 @@ async function generateAll() {
         setStatus(`⏳ Converting ${i + 1}/${gstr3bFiles.length}: ${file.name}...`, 'info');
 
         try {
-            const xlsxArrayBuffer = await converter.convertPDF(file);
+            const xlsxArrayBuffer = await converterInstance.convertPDF(file);
             const blob = new Blob([xlsxArrayBuffer], { type: 'application/octet-stream' });
 
             const baseName = sanitizeFilename(file.name.replace(/\.pdf$/i, '')) + '.xlsx';
